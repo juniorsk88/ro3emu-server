@@ -542,6 +542,12 @@ public sealed partial class CombatService
         {
             case "Fire_Wall" or "Quagmire" or "Fire_Pillar" or "Meteor_Storm" or "Lord_of_Vermilion" or "Storm_Gust" when logic.Length >= 3:
                 npc = (int)logic[0]; interval = (int)logic[1]; duration = (int)logic[2]; break;
+            case "Magnus_Exorcismus" when logic.Length >= 2:
+                // Exorciser cross. _kLogicData [NPC, seconds it lasts, ...] ("For the next ${4} sec."), _kDescData[4] is the
+                // seconds between hits ("every ${5} sec."); _iTargetMax caps the enemies per hit.
+                npc = (int)logic[0]; duration = (int)(logic[1] * 1000);
+                interval = DescNumber(row, 4) is > 0 and var gap ? (int)(gap * 1000) : 500;
+                break;
             case "Safety_Wall" or "Pneuma" when logic.Length >= 8:
                 npc = (int)logic[5]; duration = (int)logic[2]; radius = (float)(logic[7] / 100);
                 protection = script == "Safety_Wall" ? 1 : 2; charges = script == "Safety_Wall" ? (int)logic[1] : int.MaxValue; break;
@@ -582,6 +588,10 @@ public sealed partial class CombatService
             if (RollBuff(tuple, out int buffId, out int buffDuration)) await _buffs.AddAsync(s, buffId, buffDuration, s.Role.Id);
         return true;
     }
+
+    /// <summary>_kDescData[index] as a number (the table keeps the description values as strings), or 0.</summary>
+    private static double DescNumber(JsonElement row, int index) => new SkillConfig(row).DescData is { } desc && index < desc.Length
+        && double.TryParse(desc[index], System.Globalization.CultureInfo.InvariantCulture, out double value) ? value : 0;
 
     private async Task TickSkillObjectAsync(SkillObject unit)
     {
