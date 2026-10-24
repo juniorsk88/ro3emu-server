@@ -558,6 +558,9 @@ public sealed partial class CombatService
             case "Sanctuary" when DescNumber(row, 3) > 0 && DescNumber(row, 4) > 0:
                 // "For the next ${4} seconds, every ${5} seconds": the blessing area has no NPC (_kLogicData [4] is the seconds again).
                 duration = (int)(DescNumber(row, 3) * 1000); interval = (int)(DescNumber(row, 4) * 1000); timedArea = true; break;
+            case "ZhongLiYuanYe" when logic.Length >= 2:
+                // Gravitation Field: _kLogicData [ms between waves, ms it lasts, ...] ("lasts ${6} seconds and strikes a total of ${7} times").
+                interval = (int)logic[0]; duration = (int)logic[1]; timedArea = true; break;
             case "Safety_Wall" or "Pneuma" when logic.Length >= 8:
                 npc = (int)logic[5]; duration = (int)logic[2]; radius = (float)(logic[7] / 100);
                 protection = script == "Safety_Wall" ? 1 : 2; charges = script == "Safety_Wall" ? (int)logic[1] : int.MaxValue; break;

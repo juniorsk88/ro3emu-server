@@ -84,6 +84,25 @@ public sealed partial class SkillCombatTests
             h => h.SessionId == accepted.SessionId && h.Dsts.Any(d => d.DstID == other));
     }
 
+    /// <summary>
+    /// Gravitation Field (12212): "The gravity field lasts ${6} seconds and strikes a total of ${7} times" (_kDescData [.., 4, 8],
+    /// _kLogicData [500, 3900, ..]: a wave every 0.5 s). It struck once.
+    /// </summary>
+    [ClientDataFact]
+    public async Task GravitationFieldStrikesEightTimes()
+    {
+        await using var alice = await InWorld("Alice");
+        await Gm("alice", "!lvl 99"); await Gm("alice", "!job 2300"); await Teach("alice", 12212);
+        var target = await Target("alice", stationary: true);
+        await Loop.InvokeAsync(() => { target.Hp = 10_000_000; return Task.CompletedTask; });
+        await alice.SendGameAsync(CombatService.UseSkill, new CastSkillReq { SkillId = 1221201, TargetPos = Session("alice").Position.Clone() });
+        var accepted = await Next(alice, CombatService.UseSkill, CastSkillRsp.Parser);
+        Assert.Equal(0, accepted.Result);
+        await Task.Delay(5500);
+        Assert.InRange(HitsOn(alice, accepted.SessionId, target.Uid), 7, 9);
+        Assert.Empty(Session("alice").SkillObjects);
+    }
+
     private static int HitsOn(Ro3Emu.Bot.BotClient bot, long sessionId, long targetId) => bot.Inbox.Snapshot()
         .Where(e => e.IsGame(CombatService.SkillHit)).Select(e => SkillHitInfo.Parser.ParseFrom(e.Body))
         .Count(h => h.SessionId == sessionId && h.Dsts.Any(d => d.DstID == targetId));
