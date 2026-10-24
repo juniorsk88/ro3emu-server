@@ -47,6 +47,43 @@ public sealed partial class SkillCombatTests
         Assert.InRange(HitsOn(alice, accepted.SessionId, target.Uid), 7, 9);
     }
 
+    /// <summary>
+    /// Sanctuary (14115): "For the next ${4} seconds, every ${5} seconds, it restores Life ... to up to ${6} allies within the
+    /// area" (_kDescData [15, 7, 7, 4, 0.6, ...]). It healed once. A caster standing in the area is healed 7 times in 4 s.
+    /// </summary>
+    [ClientDataFact]
+    public async Task SanctuaryHealsEverySixTenthsOfASecondForFourSeconds()
+    {
+        await using var alice = await InWorld("Alice");
+        await Gm("alice", "!job 4200"); await Teach("alice", 14115);
+        await alice.SendGameAsync(CombatService.UseSkill, new CastSkillReq { SkillId = 1411501, TargetPos = Session("alice").Position.Clone() });
+        var accepted = await Next(alice, CombatService.UseSkill, CastSkillRsp.Parser);
+        Assert.Equal(0, accepted.Result);
+        await Task.Delay(5500);
+        long self = (long)alice.Self!.Uuid;
+        int heals = alice.Inbox.Snapshot().Where(e => e.IsGame(CombatService.SkillHit)).Select(e => SkillHitInfo.Parser.ParseFrom(e.Body))
+            .Count(h => h.SessionId == accepted.SessionId && h.Dsts.Any(d => d.DstID == self && d.DamageType == DamageType.Heal));
+        Assert.InRange(heals, 6, 8);
+        Assert.Empty(Session("alice").SkillObjects);
+    }
+
+    /// <summary>The blessing area is the 7 m * 7 m square of the description, not a 7 m circle: an ally 6 m from its centre is outside.</summary>
+    [ClientDataFact]
+    public async Task SanctuaryDoesNotHealAnAllyOutsideItsSquare()
+    {
+        await using var alice = await InWorld("Alice"); await using var bob = await InWorld("Bob");
+        await Gm("alice", "!job 4200"); await Teach("alice", 14115);
+        var point = Session("alice").Position.Clone();
+        await Loop.InvokeAsync(() => { Session("bob").Position.X = point.X + 6; Session("bob").Position.Z = point.Z; return Task.CompletedTask; });
+        await alice.SendGameAsync(CombatService.UseSkill, new CastSkillReq { SkillId = 1411501, TargetPos = point });
+        var accepted = await Next(alice, CombatService.UseSkill, CastSkillRsp.Parser);
+        Assert.Equal(0, accepted.Result);
+        await Task.Delay(1500);
+        long other = (long)bob.Self!.Uuid;
+        Assert.DoesNotContain(alice.Inbox.Snapshot().Where(e => e.IsGame(CombatService.SkillHit)).Select(e => SkillHitInfo.Parser.ParseFrom(e.Body)),
+            h => h.SessionId == accepted.SessionId && h.Dsts.Any(d => d.DstID == other));
+    }
+
     private static int HitsOn(Ro3Emu.Bot.BotClient bot, long sessionId, long targetId) => bot.Inbox.Snapshot()
         .Where(e => e.IsGame(CombatService.SkillHit)).Select(e => SkillHitInfo.Parser.ParseFrom(e.Body))
         .Count(h => h.SessionId == sessionId && h.Dsts.Any(d => d.DstID == targetId));

@@ -25,6 +25,10 @@ public sealed class SkillObject : WorldUnit
     public int ProtectionDistanceType { get; init; }
     public HashSet<int> Skills { get; } = new();
 
+    /// <summary>False for a timed area the client draws from the skill itself (Sanctuary, Gravitation Field): no NPC, so
+    /// nothing enters the AOI and a hit names the caster as its source.</summary>
+    public bool HasEntity => NpcId > 0;
+
     public override EntityBase Entity() => new()
     {
         Uuid = (ulong)Uid, EntityTemplateID = (ulong)NpcId, EntityType = EntityType, Owner = OwnerId,
@@ -154,17 +158,20 @@ public sealed partial class CombatService
             else
             {
                 float radius = field?.Radius ?? (float)(Numbers(row, "_kRange").FirstOrDefault(0) / 100);
-                allies.AddRange(_world.PlayersIn(s.WorldScene).Where(p => !p.Dead && Relation(row, true, p == s)
-                    && (p == s || radius > 0 && Distance(p.Position, center) <= radius))
+                // A dragged rectangle (Sanctuary's 7 m * 7 m) is the skill's own area, caster included only when inside it.
+                bool dragRect = field != null && new SkillConfig(row).Release == SkillRelease.DragRect;
+                bool InArea(GameSession p) => dragRect ? SkillAreaContains(row, action.Origin, center, action.Request.Face, p.Position)
+                    : p == s || radius > 0 && Distance(p.Position, center) <= radius;
+                allies.AddRange(_world.PlayersIn(s.WorldScene).Where(p => !p.Dead && Relation(row, true, p == s) && InArea(p))
                     .OrderBy(p => Distance(p.Position, center)).Take((int)Math.Max(1, GameData.Int(row, "_iTargetMax"))));
-                if (allies.Count == 0 && Relation(row, true, true)) allies.Add(s);
+                if (allies.Count == 0 && !dragRect && Relation(row, true, true)) allies.Add(s);
             }
         }
         var stats = _character.Stats(s);
         var attacker = new Fighter(stats[103], stats[104], stats[109], stats[111], s.Progress!.Level, 1);
         var hit = new SkillHitInfo
         {
-            SrcID = field?.Uid ?? action.SourceId, SkillId = action.Request.SkillId, SessionId = action.Id,
+            SrcID = field is { HasEntity: true } ? field.Uid : action.SourceId, SkillId = action.Request.SkillId, SessionId = action.Id,
             RootCtxGuid = action.Id, ComboIndex = action.Request.ComboIndex, ShowPoint = HitEffect(GameData.Int(row, "_iScriptShow")),
             Split = HitSplit(row),
             SrcElement = (int)Math.Max(1, GameData.Int(row, "_iEleType")),
@@ -536,7 +543,7 @@ public sealed partial class CombatService
         string script = Script(row);
         var logic = Numbers(row, "_kLogicData");
         int npc = 0, duration = 0, interval = 1000, protection = 0, charges = 0;
-        bool trap = false;
+        bool trap = false, timedArea = false;
         float radius = (float)(Numbers(row, "_kRange").FirstOrDefault(150) / 100);
         switch (script)
         {
@@ -548,6 +555,9 @@ public sealed partial class CombatService
                 npc = (int)logic[0]; duration = (int)(logic[1] * 1000);
                 interval = DescNumber(row, 4) is > 0 and var gap ? (int)(gap * 1000) : 500;
                 break;
+            case "Sanctuary" when DescNumber(row, 3) > 0 && DescNumber(row, 4) > 0:
+                // "For the next ${4} seconds, every ${5} seconds": the blessing area has no NPC (_kLogicData [4] is the seconds again).
+                duration = (int)(DescNumber(row, 3) * 1000); interval = (int)(DescNumber(row, 4) * 1000); timedArea = true; break;
             case "Safety_Wall" or "Pneuma" when logic.Length >= 8:
                 npc = (int)logic[5]; duration = (int)logic[2]; radius = (float)(logic[7] / 100);
                 protection = script == "Safety_Wall" ? 1 : 2; charges = script == "Safety_Wall" ? (int)logic[1] : int.MaxValue; break;
@@ -563,7 +573,8 @@ public sealed partial class CombatService
                 }
                 break;
         }
-        if (npc == 0 || _data.Row("NPCConfig", npc) is not { } npcRow) return false;
+        var npcRow = npc != 0 ? _data.Row("NPCConfig", npc) : null;
+        if (npcRow == null && !timedArea) return false;
         if (trap)
         {
             var desc = row.TryGetProperty("_kDescData", out var d) && d.ValueKind == JsonValueKind.Array ? d.EnumerateArray().ToArray() : [];
@@ -575,14 +586,15 @@ public sealed partial class CombatService
         {
             Uid = ++_skillObjectIds, SceneEntry = s.SceneEntry, InstanceId = s.InstanceId, RuntimeMap = s.RuntimeMap,
             OwnerSession = s, OwnerId = s.Role!.Id,
-            NpcId = npc, EntityType = (int)GameData.Int(npcRow, "_iNPCType"), Cast = action,
+            NpcId = npc, EntityType = npcRow is { } npcType ? (int)GameData.Int(npcType, "_iNPCType") : 0, Cast = action,
             X = point.X, Y = point.Y, Z = point.Z, Face = action.Request.Face, ExpiresMs = Now + Math.Max(1, duration),
             IntervalMs = Math.Max(50, interval), NextTickMs = Now, Radius = radius, Trap = trap,
             ProtectionDistanceType = protection, Charges = charges,
         };
-        foreach (int skill in Numbers(npcRow, "_kSkills").Select(v => (int)v)) unit.Skills.Add(skill);
+        if (npcRow is { } skillsRow)
+            foreach (int skill in Numbers(skillsRow, "_kSkills").Select(v => (int)v)) unit.Skills.Add(skill);
         s.SkillObjects.Add(unit);
-        await _world.AddUnitAsync(unit);
+        if (unit.HasEntity) await _world.AddUnitAsync(unit);
         if (!CurrentCastMap(s, action)) { await RemoveSkillObjectAsync(unit); return true; }
         foreach (var tuple in Tuples(row, "_kBuff1"))
             if (RollBuff(tuple, out int buffId, out int buffDuration)) await _buffs.AddAsync(s, buffId, buffDuration, s.Role.Id);
@@ -622,7 +634,7 @@ public sealed partial class CombatService
         if (unit.Removing) return;
         unit.Removing = true;
         unit.OwnerSession.SkillObjects.Remove(unit);
-        await _world.RemoveUnitAsync(unit);
+        if (unit.HasEntity) await _world.RemoveUnitAsync(unit);
     }
 
     /// <summary>Scene/role/disconnect teardown invalidates callbacks before despawning owned skill entities.</summary>
