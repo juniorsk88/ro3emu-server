@@ -79,8 +79,32 @@ public sealed partial class TeamService(SessionRegistry sessions, CharacterServi
     public int ExpBonus(GameSession killer)
     {
         if (killer.Role is not { } role || !_byMember.TryGetValue(role.Id, out var team)) return 10000;
-        int sameMap = team.Members.Count(m => Session(m) is { } s && s.WorldScene == killer.WorldScene);
+        int sameMap = _options.Value.PartyKillShare ? 1 + KillSharers(killer).Count
+            : team.Members.Count(m => Session(m) is { } s && s.WorldScene == killer.WorldScene);
         return ExpBuff[Math.Clamp(sameMap, 1, ExpBuff.Length) - 1];
+    }
+
+    /// <summary>
+    /// The other members of the killer's party who share its kill (Ro3Emu:PartyKillShare): online, alive, on the same map and
+    /// within PartyKillShareRange of the killer and no more than PartyKillShareLevelGap levels apart from them.
+    /// Empty when solo or when the switch is off.
+    /// </summary>
+    public IReadOnlyList<GameSession> KillSharers(GameSession killer)
+    {
+        var opt = _options.Value;
+        if (!opt.PartyKillShare || killer.Role is not { } role || !_byMember.TryGetValue(role.Id, out var team)) return [];
+        var found = new List<GameSession>();
+        foreach (long member in team.Members.ToArray())
+        {
+            if (member == role.Id || Session(member) is not { } s || s.Role == null || s.Progress == null || s.Dead) continue;
+            if (s.WorldScene != killer.WorldScene) continue;
+            if (opt.PartyKillShareLevelGap > 0 && killer.Progress != null
+                && Math.Abs(s.Progress.Level - killer.Progress.Level) > opt.PartyKillShareLevelGap) continue;
+            if (opt.PartyKillShareRange > 0
+                && MonsterService.Distance(killer.Position.X, killer.Position.Z, s.Position.X, s.Position.Z) > opt.PartyKillShareRange) continue;
+            found.Add(s);
+        }
+        return found;
     }
 
     /// <summary>After a party's roster or a member's card (career, online state) changed, with the roles it concerns: the

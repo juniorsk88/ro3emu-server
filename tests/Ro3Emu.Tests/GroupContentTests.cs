@@ -472,4 +472,31 @@ public sealed partial class GroupContentTests : IAsyncLifetime
         for (int i = 0; i < 100 && !Session(alice).Buffs.Any(b => b.ConfigId == 990601); i++) await Task.Delay(20);
         Assert.Contains(Session(alice).Buffs, b => b.ConfigId == 990601);
     }
+
+    [ClientDataFact]
+    public async Task ALoneRoleEntersTheRealmOfTheGodsWithTheServerOptionAndMeetsABossWeakenedByDungeonSoloJson()
+    {
+        File.WriteAllText(Path.Combine(_dataDir, "dungeon-solo.json"), """{ "hpPercent": 50, "attackPercent": 50 }""");
+        var options = Service<Microsoft.Extensions.Options.IOptions<ServerOptions>>().Value;
+        Assert.False(options.DungeonSolo);
+        await using var alice = await InWorld("Alice");
+        await Gm(alice, "!lvl 99");
+        // Off, the default: the original team size applies (the client's own Challenge button never even sends this alone).
+        Assert.Equal(ErrorCodes.DungeonTeamSize, await Enter(alice, Request(Normal, 1, RaidScene)));
+        options.DungeonSolo = true;
+        try
+        {
+            Assert.False(Session(alice).DungeonSoloMatch);
+            Assert.Equal(0, await Enter(alice, Request(Normal, 1, RaidScene)));
+            var (instance, _) = await Load(alice, RaidScene);
+            await alice.SendGameAsync(DungeonService.ModuleButton, new DungeonModuleButtonReq { ButtonId = 1 }); // Start Battle
+            Assert.Equal(0, (await Next(alice, DungeonService.ModuleButton, DungeonModuleButtonResp.Parser)).Result);
+            var boss = await BossIn(instance, NormalBoss);
+            var original = Service<MonsterService>().Template(NormalBoss)!;
+            Assert.Equal(original.MaxHp / 2, boss.Template.MaxHp);
+            Assert.Equal(original.Atk / 2, boss.Template.Atk);
+            Assert.Equal(original.Def, boss.Template.Def);
+        }
+        finally { options.DungeonSolo = false; }
+    }
 }

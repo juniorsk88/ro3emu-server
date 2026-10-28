@@ -13,6 +13,8 @@ public sealed partial class CharacterService
     public sealed record OwnedAwardSource(string CommandKind, string SourceKey, object Outcome);
     internal Func<GameSession, MonsterUnit, Ownership.ReservationKey[]>? GetKillTaskParticipantKeys { get; set; }
     internal Action<GameSession, MonsterUnit, RewardSettlement>? StageKillTaskObligations { get; set; }
+    /// <summary>The other party members who share a kill by this killer (TeamService.KillSharers); empty without a party.</summary>
+    internal Func<GameSession, IReadOnlyList<GameSession>>? KillSharers { get; set; }
 
     /// <summary>Stage E02/13e: freeze one owned payment and result before the writer is admitted.
     /// The natural source names a world or activity occurrence, while the operation ID identifies this attempt.</summary>

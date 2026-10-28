@@ -212,9 +212,9 @@ public sealed class GmCommands(IOptions<ServerOptions> options, GameData data, S
             await services.GetRequiredService<DungeonMatchService>().LeaveRoleAsync(s, notifySelf: true);
             s.DungeonSoloMatch = a[0].Equals("on", StringComparison.OrdinalIgnoreCase);
             await ReplyAsync(s, $"Dungeon solo TEST AID {(s.DungeonSoloMatch ? "ON" : "OFF")} for this role session. "
-                + "Click Enter Challenge again. This is not original matchmaking behavior.");
-        }
-        ),
+                + "Click Enter Challenge again. This is not original matchmaking behavior. "
+                + "With the server switch Ro3Emu:DungeonSolo on, a lone role may enter either way.");
+        }),
         ["dungeon"] = ("<sceneEntry> (test aid: the client's 30400 Enter for a solo story dungeon)", async (s, a) =>
         {
             if (a.Length != 1 || !long.TryParse(a[0], out long scene)) throw new ArgumentException("<sceneEntry>");
@@ -242,11 +242,26 @@ public sealed class GmCommands(IOptions<ServerOptions> options, GameData data, S
             else if (a.Length == 2 && a[0] == "rank" && int.TryParse(a[1], out int rank))
                 await ReplyAsync(s, await battles.SetChickenRankAsync(s, rank));
             else throw new ArgumentException("shape <players> <team> (players a multiple of team, more than one team) | shape reset | skip | rank <n>");
-        }
-        ),
+        }),
+        // Server-wide adjustments, in memory until the next restart (the Ro3Emu__CombatLocks / Ro3Emu__PresetSwitchCooldown switches set the start-up value).
+        ["combatlock"] = ("on|off (server-wide: lock skills, build switch, stat points and more while fighting; off = nothing locks)", async (s, a) =>
+        {
+            if (a.Length == 1 && a[0].ToLowerInvariant() is "on" or "off") options.Value.CombatLocks = a[0].Equals("on", StringComparison.OrdinalIgnoreCase);
+            else if (a.Length != 0) throw new ArgumentException("on|off");
+            await ReplyAsync(s, $"Combat locks are {(options.Value.CombatLocks ? "ON" : "OFF")} (players already marked as fighting leave that state within seconds).");
+        }),
+        ["presetcd"] = ("[seconds] (server-wide wait between skill Preset 1-5 switches; 0 = instant, the original game waits 3)", async (s, a) =>
+        {
+            if (a.Length == 1) options.Value.PresetSwitchCooldown = Math.Clamp(I(a[0]), 0, 60);
+            else if (a.Length != 0) throw new ArgumentException("[seconds]");
+            await ReplyAsync(s, $"Skill Preset switch wait: {options.Value.PresetSwitchCooldown} s.");
+        }),
         ["online"] = ("", Online),
         ["warp"] = ("<sceneEntry> [x z]", Warp),
         ["jump"] = ("<x> <z>", Jump),
+        ["skill"] = ("<skillGroup> [level] (test aid: learn a skill for this session only; level defaults to its maximum)", LearnSkill),
+        ["dummy"] = ("[npcId] (test aid: a stationary monster with huge HP, 5 m ahead; replaces your previous one)", Dummy),
+        ["cd"] = ("(test aid: clear this role's skill cooldowns)", ClearCooldowns),
         ["finditem"] = ("<name>", FindItem),
         ["item"] = ("<id|name> [count]", Item),
         ["mail"] = ("<title> [item count]", Mail),
@@ -389,6 +404,43 @@ public sealed class GmCommands(IOptions<ServerOptions> options, GameData data, S
         return amount >= 0
             ? Op(s, OpAddItem, ["1", amount.ToString(CultureInfo.InvariantCulture)])
             : Op(s, OpRemoveItem, ["1", (-amount).ToString(CultureInfo.InvariantCulture)]);
+    }
+
+    /// <summary>Test aid: sets the learned level in the running session only (nothing is saved or charged).</summary>
+    private Task LearnSkill(GameSession s, string[] args)
+    {
+        var skills = services.GetRequiredService<SkillService>();
+        int group = (int)L(args[0]);
+        int max = skills.MaxLevel(group);
+        if (max <= 0) return ReplyAsync(s, "No such skill group.");
+        int level = args.Length > 1 ? (int)Math.Clamp(L(args[1]), 0, max) : max;
+        s.Progress!.Skills[group] = level;
+        return ReplyAsync(s, $"Skill {group} level {level}/{max} (this session).");
+    }
+
+    private readonly Dictionary<long, MonsterUnit> dummies = new();
+
+    private async Task Dummy(GameSession s, string[] args)
+    {
+        var monsters = services.GetRequiredService<MonsterService>();
+        int npc = args.Length > 0 ? (int)L(args[0]) : 5000001;
+        if (monsters.Template(npc) is not { } template) { await ReplyAsync(s, "No such monster."); return; }
+        long role = s.Role!.Id;
+        if (dummies.Remove(role, out var old) && !old.Dead) await monsters.KillAsync(old);
+        double face = s.Face * Math.PI / 180;
+        var at = new MapPoint(s.Position.X + 5f * (float)Math.Sin(face), s.Position.Y, s.Position.Z + 5f * (float)Math.Cos(face), 0);
+        var unit = await monsters.SpawnSingleAsync(s.SceneEntry, npc, at, s.InstanceId, customTemplate: template with { RoamDistance = 0 });
+        if (unit == null) { await ReplyAsync(s, "Could not place it here."); return; }
+        unit.Hp = 100_000_000;
+        dummies[role] = unit;
+        await ReplyAsync(s, $"Dummy {unit.Uid} ({npc}) at {at.X:F1} {at.Z:F1}.");
+    }
+
+    private Task ClearCooldowns(GameSession s, string[] _)
+    {
+        s.SkillCds.Clear();
+        s.SkillModeCds.Clear();
+        return ReplyAsync(s, "Cooldowns cleared.");
     }
 
     private Task Where(GameSession s, string[] _) =>

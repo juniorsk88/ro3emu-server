@@ -81,6 +81,18 @@ public sealed class LifeJobTests : IAsyncLifetime
         return await Next(b, LifeJobService.StartForge, StartForgeResp.Parser);
     }
 
+    /// <summary>
+    /// A game message that needs a role is dropped unanswered on the role screen (the stage gate, upstream #36): no answer
+    /// arrives and nothing changes.
+    /// </summary>
+    private static async Task Unanswered(BotClient b, uint request, IMessage message, uint answer)
+    {
+        int before = b.Inbox.Snapshot().Count(e => e.IsGame(answer));
+        await b.SendGameAsync(request, message);
+        await Task.Delay(600);
+        Assert.Equal(before, b.Inbox.Snapshot().Count(e => e.IsGame(answer)));
+    }
+
     [ClientDataFact]
     public async Task LifeRequestsAtRoleScreenCannotMutatePreviousCharacter()
     {

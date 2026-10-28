@@ -197,6 +197,40 @@ public sealed partial class DungeonTests : IAsyncLifetime
         table[key] = JsonSerializer.SerializeToElement(row);
     }
 
+    [ClientDataFact]
+    public async Task AnyPartyMemberMayStartTheTeamDungeonUnlessTheSwitchIsOff()
+    {
+        await using var alice = await InWorld("Alice");
+        await using var bob = await InWorld("Bob");
+        await using var carol = await InWorld("Carol");
+        foreach (var bot in new[] { alice, bob, carol }) await Gm(bot, "!lvl 99");
+        long team = await Party(alice, bob);
+        await alice.SendGameAsync(TeamService.TeamInvite, new InviteIntoTeamReq { Guid = (long)carol.Self!.Uuid });
+        Assert.Equal(0, (await Next(alice, TeamService.TeamInvite, InviteIntoTeamResp.Parser)).Result);
+        await Next(carol, TeamService.TeamNotifyInvitee, NotifyInvitee.Parser);
+        await carol.SendGameAsync(TeamService.TeamInviteeResp, new InviteeResp
+        { TeamId = team, IsAgree = true, InviteGuid = (long)alice.Self!.Uuid });
+        Assert.Equal(0, (await Next(carol, TeamService.TeamInviteeResp, InviteeRespResp.Parser)).Result);
+
+        var options = Service<Microsoft.Extensions.Options.IOptions<ServerOptions>>().Value;
+        options.DungeonAnyMemberEnter = false;
+        try { Assert.Equal(ErrorCodes.NoPermission, await Enter(bob)); }
+        finally { options.DungeonAnyMemberEnter = true; }
+
+        // Bob is not the leader but starts it; Alice (the leader) is asked to confirm like Carol.
+        Assert.Equal(0, await Enter(bob));
+        var ready = await Next(alice, DungeonService.ReadyQueue, TeamEnterReadyQueueNotify.Parser,
+            n => !n.Cancel && n.ReadyQueue.Count == 3);
+        Assert.True(ready.ReadyQueue[(long)bob.Self!.Uuid]);
+        Assert.False(ready.ReadyQueue[(long)alice.Self.Uuid]);
+        foreach (var bot in new[] { alice, carol })
+        {
+            await bot.SendGameAsync(DungeonService.Confirm, new ConfirmTeamDungeonReq { IsAgree = true });
+            Assert.Equal(0, (await Next(bot, DungeonService.Confirm, ConfirmTeamDungeonRsp.Parser)).Result);
+        }
+        Assert.Equal(0, (await Next(alice, DungeonService.CreateResult, CreateDungeonResultNotify.Parser)).Result);
+    }
+
     private void SyntheticSolo(bool daily = false)
     {
         ChangeRow("TenGameplayConfig", "50101", row => row["_kLimit"] = new JsonArray(1, 1));

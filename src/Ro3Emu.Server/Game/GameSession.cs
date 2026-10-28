@@ -227,6 +227,8 @@ public sealed class GameSession(PhonestChannel channel, TrafficLog traffic)
     public bool ActivitiesReady { get; set; }
     /// <summary>The client has the pass challenge rows (Ro3Emu.ClientHooks.PassChallenges sent 77014): 5027 may carry them.</summary>
     public bool PassChallengeRows { get; set; }
+    /// <summary>The client has the character's level-up effect as an effect row (Ro3Emu.ClientHooks.LevelUpEffect sent 77017): a monster's evolution can play it.</summary>
+    public bool LevelUpFx { get; set; }
     public PronteraDefenseService.State? Defense { get; set; }
     public TimedBattleService.State? TimedBattle { get; set; }
     public int EventFaction { get; set; }

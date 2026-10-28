@@ -43,6 +43,9 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
 
     /// <summary>A walk segment is capped so a monster seen mid-way is re-synchronized soon.</summary>
     private const float MaxSegment = 12f;
+    /// <summary>Route searches (NavGrid.FindPath) the whole realm may start per game tick, and the cells one may expand: a monster behind a wall plans once and follows the route (<see cref="PathStep"/>).</summary>
+    private const int PathSearchesPerTick = 2, PathMaxNodes = 800;
+    private int _pathBudget = PathSearchesPerTick;
 
     private readonly Dictionary<int, MonsterTemplate?> _templates = new();
     private sealed class SpawnState
@@ -240,6 +243,7 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
     /// <summary>Owned deadlines can be dropped immediately when a runtime retires.</summary>
     public void Tick(GameTime time)
     {
+        _pathBudget = PathSearchesPerTick;
         // The capture of each state lives in RunDue: a lambda over the loop variable here allocated a closure for
         // every spawn state on every tick, due or not.
         List<SpawnState>? ready = null;
@@ -423,12 +427,11 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
         }
         if (m.Returning && !m.Moving)
         {
+            // Still away from home (a segment of its route ended at a corner): go on walking.
+            if (Distance(m.X, m.Z, m.Home.X, m.Home.Z) > 2.5f && AiOf(m).Pathfinding
+                && (WalkTo(m, map, m.Home.X, m.Home.Z, 2f) || PathStep(m, map, m.Home.X, m.Home.Z, 2f))) return;
             m.Returning = false;
-            if (m.Hp < m.Template.MaxHp)
-            {
-                m.Hp = m.Template.MaxHp;
-                SendHealth(m);
-            }
+            if (AiOf(m).HealOnReset) HealFully(m);
         }
         // Roam only where somebody can see it.
         if (!m.Moving && m.Template.RoamDistance > 0 && now >= m.NextRoamMs)
@@ -486,6 +489,7 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
     {
         if (m.Dead || m.WorldScene != target.WorldScene || TargetVisible?.Invoke(m, target) == false || m.Template.SpeedCm == 0 && m.Template.AttackRange <= 0) return;
         if (m.Target == null) m.NextSwingMs = NowMs + 300;
+        m.ChaseActiveMs = NowMs;
         SetTarget(m, target);
         m.Returning = false;
     }
@@ -506,6 +510,7 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
     {
         if (m.Dead || m.Hp <= 0 || target.Dead || target.Hp <= 0 || m.InstanceId == 0 || m.WorldScene != target.WorldScene) return;
         if (m.PetTarget == null) m.NextSwingMs = NowMs + 300;
+        m.ChaseActiveMs = NowMs;
         m.PetTarget = target;
         m.Returning = false;
     }
@@ -514,7 +519,7 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
     {
         var target = m.PetTarget!;
         if (target.Dead || target.Hp <= 0 || target.Owner.SceneLoading || target.WorldScene != m.WorldScene
-            || Distance(m.Home.X, m.Home.Z, target.X, target.Z) > m.Template.LeashDistance)
+            || TooFar(m, target.X, target.Z) || IdleTooLong(m, now))
         {
             m.PetTarget = null;
             if (m.Target == null) Disengage(m, map);
@@ -542,6 +547,7 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
             if (now >= m.NextSwingMs && AttackPet != null)
             {
                 m.NextSwingMs = now + m.Template.SwingIntervalMs;
+                m.ChaseActiveMs = now;
                 m.Face = Angle(m.X, m.Z, target.X, target.Z);
                 _loop.TrackRuntimeDetached("monster pet attack", () => AttackPet(m, target));
             }
@@ -553,7 +559,7 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
             m.NextChaseMs = now + 400;
             float dx = target.X - m.X, dz = target.Z - m.Z;
             float go = Math.Min(MaxSegment, dist - m.Template.AttackRange * 0.8f);
-            if (go > 0.2f) WalkTo(m, map, m.X + dx / dist * go, m.Z + dz / dist * go, 1f);
+            if (go > 0.2f) ChaseStep(m, map, target.X, target.Z, m.X + dx / dist * go, m.Z + dz / dist * go);
         }
     }
 
@@ -561,7 +567,7 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
     {
         var target = m.Target!;
         bool lost = target.Role == null || target.Dead || target.SceneLoading || TargetVisible?.Invoke(m, target) == false || target.WorldScene != m.WorldScene
-                    || Distance(m.Home.X, m.Home.Z, target.Position.X, target.Position.Z) > m.Template.LeashDistance;
+                    || TooFar(m, target.Position.X, target.Position.Z) || IdleTooLong(m, now);
         if (lost)
         {
             Disengage(m, map);
@@ -590,6 +596,7 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
             if (now >= m.NextSwingMs && Attack != null)
             {
                 m.NextSwingMs = now + m.Template.SwingIntervalMs;
+                m.ChaseActiveMs = now;
                 m.Face = Angle(m.X, m.Z, target.Position.X, target.Position.Z);
                 _loop.TrackRuntimeDetached("monster attack", () => Attack(m, target));
             }
@@ -603,8 +610,110 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
             float dx = target.Position.X - m.X, dz = target.Position.Z - m.Z;
             float len = MathF.Sqrt(dx * dx + dz * dz);
             float go = Math.Min(MaxSegment, len - m.Template.AttackRange * 0.8f);
-            if (go > 0.2f) WalkTo(m, map, m.X + dx / len * go, m.Z + dz / len * go, 1f);
+            if (go > 0.2f) ChaseStep(m, map, target.Position.X, target.Position.Z, m.X + dx / len * go, m.Z + dz / len * go);
         }
+    }
+
+    /// <summary>Bosses and MVPs (monsters with special skills) follow the "boss" chase profile, every other monster the
+    /// "field" one (<see cref="MonsterAiSettings"/>: by default a field monster is not tied to its spawn point, a boss
+    /// keeps its post, walks back and heals).</summary>
+    private static MonsterAiProfile AiOf(MonsterUnit m) => MonsterAiSettings.For(m.Template.Skills != null || m.SpecialsOwnedByMvp);
+
+    /// <summary>
+    /// Whether the monster gives the target up. By default a field monster gives up only when the target is too far from
+    /// the monster itself, wherever the chase took it from its spawn point, so a pack can be pulled across the map.
+    /// </summary>
+    private static bool TooFar(MonsterUnit m, float targetX, float targetZ)
+    {
+        var ai = AiOf(m);
+        return Distance(ai.GiveUpFromHome ? m.Home.X : m.X, ai.GiveUpFromHome ? m.Home.Z : m.Z, targetX, targetZ)
+               > m.Template.LeashDistance * (float)ai.LeashMultiplier;
+    }
+
+    /// <summary>
+    /// The character's level-up sprite (fx_levelup.prefab) has no effect id in the client data: the client plays it by name from
+    /// the level-up panel. Ro3Emu.ClientHooks.LevelUpEffect adds an effect row of our own (<see cref="LevelUpFxId"/>, a new id: no
+    /// original row changes) that plays that prefab on the unit, and tells the server it did with game message
+    /// <see cref="LevelUpFxHello"/> (<see cref="GameSession.LevelUpFx"/>). A client without it gets the existing effects that stand in:
+    /// the angel-blessing light (214390017, 3.3 s on DRootFixed) and the heal sparkle (1000301) for the recovered HP.
+    /// </summary>
+    private static readonly int[] LevelUpEffectIds = [214390017, 1000301];
+
+    /// <summary>Must equal Ro3Emu.ClientHooks.LevelUpEffect.MsgId.</summary>
+    public const uint LevelUpFxHello = 77017;
+
+    /// <summary>Must equal Ro3Emu.ClientHooks.LevelUpEffect.EffectId; unused in the exported EffectData (ids end at 1.2 billion).</summary>
+    public const int LevelUpFxId = 990000001;
+
+    /// <summary>
+    /// A monster killed a player. With the profile's kill progression on it levels up with an effect, becomes stronger by
+    /// the profile's step (HP, attack, magic attack and defences, up to the cap), recovers a share of its HP and gives more
+    /// EXP and drops when it is killed, on the same scale. It does not walk home or heal fully afterwards (<see cref="Disengage"/>).
+    /// </summary>
+    public async Task OnKilledPlayerAsync(MonsterUnit m, GameSession? victim = null)
+    {
+        var ai = AiOf(m);
+        if (!ai.KillGrowth || m.Dead || m.Hp <= 0) return;
+        long now = NowMs;
+        m.LastKillMs = now;
+        m.PlayerKills++;
+        var b = m.BaseTemplate ??= m.Template;
+        double cap = ai.KillMaxPct, pct = Math.Min(cap, m.PlayerKills * ai.KillStepPct);
+        bool grew = pct > m.GrowthPct;
+        if (grew)
+        {
+            m.GrowthPct = pct;
+            m.LevelsGained++;
+            double k = 1 + pct / 100;
+            long Scale(long v) => (long)Math.Round(v * k);
+            m.Template = b with
+            {
+                Level = b.Level + m.LevelsGained, MaxHp = Math.Max(1, Scale(b.MaxHp)), Atk = Scale(b.Atk), Matk = Scale(b.Matk),
+                Def = Scale(b.Def), Mdef = Scale(b.Mdef),
+            };
+            double progress = cap > 0 ? pct / cap : 0;
+            m.ExpBonusPct = progress * ai.KillExpMaxPct;
+            m.DropBonusPct = progress * ai.KillDropMaxPct;
+        }
+        m.Hp = Math.Min(m.Template.MaxHp, m.Hp + (long)Math.Round(m.Template.MaxHp * ai.KillHealPct / 100));
+        var change = new AOIAttrChange { EntityUuid = (ulong)m.Uid, Property = { new AoIProperty { Idx = 2000, Data = m.Hp } } };
+        if (grew)
+        {
+            change.Property.Add(new AoIProperty { Idx = 101, Data = m.Template.MaxHp, BaseData = m.Template.MaxHp });
+            change.Property.Add(new AoIProperty { Idx = 2002, Data = m.Template.Level, BaseData = m.Template.Level });
+        }
+        await _world.ToUnitViewersAsync(m, CombatService.AoiAttrChange, change);
+        _log.LogInformation("Monster {Npc} killed {Victim}: kill {Kills}, level {Level}, +{Pct}% strength, HP {Hp}/{Max}",
+            m.Template.NpcId, victim?.Role?.Name, m.PlayerKills, m.Template.Level, m.GrowthPct, m.Hp, m.Template.MaxHp);
+        if (!grew) return;
+        var recipients = m.Viewers.Append(victim!).Where(v => v?.Role != null).Distinct().ToArray();
+        SkillEffectDisplayNotify Effect(int id) => new() { SourceId = m.Uid, TargetId = m.Uid, EffectId = id, TargetPos = m.Pos, Is3DPosition = true };
+        foreach (var viewer in recipients)
+        {
+            try
+            {
+                foreach (int effect in viewer.LevelUpFx ? new[] { LevelUpFxId } : LevelUpEffectIds)
+                    await viewer.SendGameAsync(CombatService.SkillEffect, Effect(effect));
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                _log.LogDebug(e, "Level-up effect not delivered to {Viewer}", viewer.Role?.Name);
+            }
+        }
+        // The client shows no level on a monster's name plate: say it in text, to the victim and everyone who sees the monster.
+        var notice = new BroadCastNotify
+        {
+            Content = $"Monstro evoluiu para o nível {m.Template.Level} (+{m.GrowthPct:0}% de força, EXP +{m.ExpBonusPct:0}%, drop +{m.DropBonusPct:0}%) e recuperou {ai.KillHealPct:0}% da vida.",
+        };
+        foreach (var viewer in recipients)
+            await viewer.SendGameAsync(GmCommands.BroadcastNotify, notice);
+    }
+
+    private void HealFully(MonsterUnit m)
+    {
+        if (m.Hp >= m.Template.MaxHp) return;
+        m.Hp = m.Template.MaxHp;
+        SendHealth(m);
     }
 
     private void Disengage(MonsterUnit m, MapInstance map)
@@ -612,26 +721,91 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
         EndBossSkills(m, interrupt: true);
         SetTarget(m, null);
         m.PetTarget = null;
+        var ai = AiOf(m);
+        long now = NowMs;
+        bool justKilled = ai.KillGrowth && m.LastKillMs > 0 && now - m.LastKillMs < 5000;   // it killed its target: no walk home, no full heal
+        if (!ai.ReturnHome || justKilled)
+        {
+            // It stays where it gave up, with the HP it has (unless the profile heals), and roams around that spot.
+            if (m.Moving)
+            {
+                m.Advance(now);
+                m.Moving = false;
+                SendStop(m, now);
+            }
+            m.Returning = false;
+            m.RoamAnchor = (m.X, m.Z);
+            if (ai.HealOnReset && !justKilled) HealFully(m);
+            return;
+        }
         m.Returning = true;
-        if (m.Template.SpeedCm > 0) WalkTo(m, map, m.Home.X, m.Home.Z, 2f); // buff 901501: +100 % MSPD on the way back
+        m.RoamAnchor = null;
+        // buff 901501: +100 % MSPD on the way back
+        if (m.Template.SpeedCm > 0 && !WalkTo(m, map, m.Home.X, m.Home.Z, 2f) && ai.Pathfinding) PathStep(m, map, m.Home.X, m.Home.Z, 2f);
     }
 
     private void Roam(MonsterUnit m, MapInstance map)
     {
         double angle = _random.NextDouble() * Math.PI * 2;
         float r = (float)(_random.NextDouble() * m.Template.RoamDistance);
-        WalkTo(m, map, m.Home.X + (float)Math.Cos(angle) * r, m.Home.Z + (float)Math.Sin(angle) * r, 1f);
+        var (cx, cz) = m.RoamAnchor ?? (m.Home.X, m.Home.Z);
+        WalkTo(m, map, cx + (float)Math.Cos(angle) * r, cz + (float)Math.Sin(angle) * r, 1f);
     }
 
-    /// <summary>One straight Walk segment when the nav grid allows it.</summary>
-    private void WalkTo(MonsterUnit m, MapInstance map, float x, float z, float speedFactor)
+    /// <summary>The profile's time-based give-up: nothing happened between the monster and its target for that long.</summary>
+    private static bool IdleTooLong(MonsterUnit m, long now)
     {
-        if (Forbidden?.Invoke(m, ForbiddenState.Walk) == true) return;
+        double seconds = AiOf(m).GiveUpSeconds;
+        return seconds > 0 && m.ChaseActiveMs > 0 && now - m.ChaseActiveMs > seconds * 1000;
+    }
+
+    /// <summary>
+    /// One chase step toward the target at (<paramref name="targetX"/>, <paramref name="targetZ"/>): the straight segment
+    /// (<paramref name="stepX"/>, <paramref name="stepZ"/>) when the navigation grid allows it, else, with pathfinding on,
+    /// the next waypoint of a route around the obstacle.
+    /// </summary>
+    private void ChaseStep(MonsterUnit m, MapInstance map, float targetX, float targetZ, float stepX, float stepZ)
+    {
+        if (WalkTo(m, map, stepX, stepZ, 1f)) { m.Path = null; m.PathUntilMs = 0; return; }
+        if (AiOf(m).Pathfinding) PathStep(m, map, targetX, targetZ, 1f);
+    }
+
+    /// <summary>
+    /// Walks toward the next waypoint of the route to (<paramref name="goalX"/>, <paramref name="goalZ"/>). A route is planned
+    /// once (NavGrid.FindPath, limited per tick for the whole realm) and followed for a few seconds, and again when the goal
+    /// moved; a failed search is not repeated for a second. Returns whether the monster started walking.
+    /// </summary>
+    private bool PathStep(MonsterUnit m, MapInstance map, float goalX, float goalZ, float speedFactor)
+    {
+        var nav = _worldData.Map(m.SceneEntry)?.Nav;
+        if (nav == null) return false;
+        long now = NowMs;
+        if (m.Path == null || now > m.PathUntilMs || Distance(m.PathGoalX, m.PathGoalZ, goalX, goalZ) > 2.5f)
+        {
+            if (m.Path == null && now < m.PathUntilMs) return false;       // a search just failed
+            if (_pathBudget <= 0) return false;                             // planning is limited per tick
+            _pathBudget--;
+            m.Path = nav.FindPath(m.X, m.Y, m.Z, goalX, goalZ, PathMaxNodes);
+            m.PathIndex = 0;
+            m.PathGoalX = goalX; m.PathGoalZ = goalZ;
+            m.PathUntilMs = now + (m.Path == null ? 1000 : 2500);
+            if (m.Path == null) return false;
+        }
+        while (m.PathIndex < m.Path.Count && Distance(m.X, m.Z, m.Path[m.PathIndex].X, m.Path[m.PathIndex].Z) < 0.8f) m.PathIndex++;
+        if (m.PathIndex >= m.Path.Count) { m.Path = null; m.PathUntilMs = 0; return false; }
+        var next = m.Path[m.PathIndex];
+        return WalkTo(m, map, next.X, next.Z, speedFactor);
+    }
+
+    /// <summary>One straight Walk segment when the nav grid allows it; false when it is blocked or too short to walk.</summary>
+    private bool WalkTo(MonsterUnit m, MapInstance map, float x, float z, float speedFactor)
+    {
+        if (Forbidden?.Invoke(m, ForbiddenState.Walk) == true) return false;
         var nav = _worldData.Map(m.SceneEntry)?.Nav;
         float? y = nav?.WalkHeight(x, z, m.Y) ?? m.Y;
-        if (y == null || nav != null && !nav.CanWalk(m.X, m.Y, m.Z, x, z)) return;
+        if (y == null || nav != null && !nav.CanWalk(m.X, m.Y, m.Z, x, z)) return false;
         float dx = x - m.X, dz = z - m.Z, len = MathF.Sqrt(dx * dx + dz * dz);
-        if (len < 0.1f) return;
+        if (len < 0.1f) return false;
         long now = NowMs;
         float speed = m.SpeedCm(now) / 100f * speedFactor;
         m.FromX = m.X; m.FromY = m.Y; m.FromZ = m.Z;
@@ -655,6 +829,7 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
                 MovementWalk = new MovementWalk { Dir = m.Face, Speed = speed, Acc = 0, EndHeight = y.Value },
             },
         }));
+        return true;
     }
 
     private static MovementChangeNtf Stop(MonsterUnit m, long now) => new()

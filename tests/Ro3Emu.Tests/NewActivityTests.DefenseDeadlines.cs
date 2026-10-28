@@ -30,6 +30,14 @@ public sealed partial class NewActivityTests
                 var state = saved.ActivityInfo[118].ActivityParam.PronteraDefense.GlobalInfo;
                 return state.CurRound == round && state.CurIntensity == intensity;
             });
+            // The session's copy follows the saved one a moment later; under load that moment is longer, so retry before judging.
+            for (int attempt = 0; attempt < 100; attempt++)
+            {
+                bool same = await Service<GameLoop>().InvokeAsync(() => Task.FromResult(Equals(
+                    defense.BuildPlayerState(session).GlobalInfo, session.NewActivities!.ActivityInfo[118].ActivityParam.PronteraDefense.GlobalInfo)));
+                if (same) break;
+                await Task.Delay(50);
+            }
             await OnLoop(() =>
             {
                 var expected = defense.BuildPlayerState(session).GlobalInfo;

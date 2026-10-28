@@ -32,11 +32,13 @@ public sealed partial class ReconstructedDungeons
     /// casts a skill at the nearest monster of the step's fight (the airship's cannons); with Shots above 0, that many
     /// strikes defeat a monster whatever the skill's damage. <paramref name="Seek"/>: the step is a hide-and-seek game
     /// whose hiding places are its Point triggers; walking there does not complete it, winning the game does.
+    /// <paramref name="Guide"/> are scene-editor guide points (m_kGuidePoints) the client draws as a line on the floor while the step runs
+    /// (dungeon var PGuideWayList), null for none.
     /// </summary>
     public sealed record ScriptedStep(string Stage, int Quest, (int Done, int Total) Goal, IReadOnlyList<SceneActor> Actors,
         long Story, IReadOnlyList<StepTrigger> Complete, IReadOnlyList<StepTrigger> Ignore, long TeleportAfter,
         IReadOnlyList<Spawn> Fight, bool All, IReadOnlyList<(long Interaction, long Skill, int Shots)>? Strikes = null,
-        Seek? Seek = null, Shelter? Shelter = null);
+        Seek? Seek = null, Shelter? Shelter = null, IReadOnlyList<long>? Guide = null);
 
     /// <summary>
     /// Cover from a boss's sweeping attack (inferred, the story Pharaoh's 3120702 after the raid Pharaoh's "Pharaoh is
@@ -123,7 +125,8 @@ public sealed partial class ReconstructedDungeons
                 ? new Shelter(shelter.GetProperty("boss").GetInt32(), shelter.GetProperty("cover").GetInt32(), shelter.GetProperty("tip").GetInt32(),
                     shelter.GetProperty("skill").GetInt64(), shelter.GetProperty("everyMs").GetInt32(), shelter.GetProperty("warnMs").GetInt32(),
                     shelter.GetProperty("width").GetSingle(), shelter.GetProperty("depth").GetSingle())
-                : null);
+                : null,
+            s.TryGetProperty("guide", out var guide) ? guide.EnumerateArray().Select(v => v.GetInt64()).ToArray() : null);
     }
 
     private static IReadOnlyList<StepTrigger> Triggers(JsonElement step, string field)

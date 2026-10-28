@@ -4,7 +4,8 @@ namespace Ro3Emu.Server.Game;
 /// The game-gate dispatcher: admits each romsg message under its reservation and runs its route. The routes come from
 /// the message modules (Game/Messages), mapped once in registration order (ServerHost).
 /// </summary>
-public sealed partial class GameMessageHandler(MsgCatalog catalog, IEnumerable<Messaging.IMessageModule> modules, ILogger<GameMessageHandler> log)
+public sealed partial class GameMessageHandler(MsgCatalog catalog, IEnumerable<Messaging.IMessageModule> modules, ILogger<GameMessageHandler> log,
+    Microsoft.Extensions.Options.IOptions<ServerOptions> options)
 {
     private Messaging.MessageRoutes? _routes;
     /// <summary>Every game message's single owner; built once, duplicates fail.</summary>
@@ -18,7 +19,7 @@ public sealed partial class GameMessageHandler(MsgCatalog catalog, IEnumerable<M
 
     public Task HandleAsync(GameSession session, uint msgId, ReadOnlyMemory<byte> body)
     {
-        if (!Routes.Accepts(session, msgId))
+        if (options.Value.RefuseEarlyMessages && !Routes.Accepts(session, msgId))
         {
             Refuse(session, msgId);
             return Task.CompletedTask;

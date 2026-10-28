@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Google.Protobuf;
+using Microsoft.Extensions.Options;
 using Romsg;
 using Ro3Emu.Server.Accounts;
 using Ro3Emu.Server.Data;
@@ -58,6 +59,7 @@ public sealed partial class TaskService
     private readonly MountService _mounts;
     private readonly SceneService _scene;
     private readonly TimeProvider _clock;
+    private readonly IOptions<ServerOptions> options;
     private Dictionary<long, TaskDef>? _defs;
     private Dictionary<long, List<long>>? _children;
 
@@ -70,7 +72,7 @@ public sealed partial class TaskService
     public TaskService(GameData data, CharacterService character, SkillService skills, FunctionService functions, CombatService combat,
         RoleStore roles, WorldData worldData, GameLoop loop, AwardService awards, SessionRegistry sessions,
         EquipmentService equipment, CardService cards, SeasonTalentService talents, SceneService scene, MountService mounts, TimeProvider clock,
-        ILogger<TaskService> log)
+        IOptions<ServerOptions> options, ILogger<TaskService> log)
     {
         this._data = data;
         this._character = character;
@@ -86,6 +88,7 @@ public sealed partial class TaskService
         this._mounts = mounts;
         this._scene = scene;
         this._clock = clock;
+        this.options = options;
         combat.Killed.Add(OnKillAsync);
         combat.Dealt.Add((s, m, damage) => { if (damage > 0 && s.Role != null) _participants.GetOrCreateValue(m).Add(s.Role.Id); });
         character.JobChanged.Add(s => { QueueRefresh(s); return Task.CompletedTask; });
@@ -153,6 +156,7 @@ public sealed partial class TaskService
         CountLogin(session); // 106801, before this login's acceptances (they start at 1)
         AcceptReady(session);
         EvaluatePassive(session);
+        SkipStalledPlots(session);
         // The full sync needs non-empty maps (they decode as nil otherwise and AllTaskInfo stays unset).
         if (session.Tasks.CompleteTaskNum.Count == 0) session.Tasks.CompleteTaskNum[FirstTask] = 0;
         Save(session);
@@ -161,6 +165,33 @@ public sealed partial class TaskService
         await SettleAsync(session);
         QueueFriendCount(session); // 103019 reads the friend list, which is not loaded here
         if (AfterLoginSettlementForTest is { } afterLogin) await afterLogin(session);
+    }
+
+    /// <summary>
+    /// Ro3Emu:PlotStallSeconds. A running task that waits for a cutscene (309002) for at least that long was started and its cutscene
+    /// shown; a role back at login with it still running had the client hang in it. The plot target is counted as played and
+    /// <see cref="SettleAsync"/> delivers the task as the cutscene's end would have.
+    /// </summary>
+    private void SkipStalledPlots(GameSession session)
+    {
+        int stall = options.Value.PlotStallSeconds;
+        if (stall <= 0) return;
+        long cutoff = _clock.GetUtcNow().ToUnixTimeMilliseconds() - stall * 1000L;
+        foreach (var info in session.Tasks!.Infos.Values.Where(i => i.Status == Running && i.StartTime <= cutoff))
+        {
+            var def = Defs()[info.TaskId];
+            bool skipped = false;
+            for (int i = 0; i < def.Targets.Length && i < info.CompleteNum.Count; i++)
+            {
+                if (def.Targets[i][0] != TPlot) continue;
+                long need = Required(session, def.Targets[i]);
+                if (need <= 0 || info.CompleteNum[i] >= need) continue;
+                info.CompleteNum[i] = need;
+                skipped = true;
+            }
+            if (skipped) _log.LogInformation("{Name} logged in with task {Task} stuck in its cutscene: counted as played",
+                session.Role?.Name, info.TaskId);
+        }
     }
 
     /// <summary>

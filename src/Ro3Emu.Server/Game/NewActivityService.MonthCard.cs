@@ -87,8 +87,14 @@ public sealed partial class NewActivityService
                 MonthCardId = id, ExpireTs = newExpiry, LastDays = lastDays, DayAward = dayAward,
             };
             var costs = available > 0 ? new[] { (Entry: token, Count: available) } : [];
-            if (await CommitAsync(session, next, costs: costs, runtime: nextRuntime,
-                source: $"month-card/convert/{id}/{newExpiry}") != 0) return;
+            // One card failing to commit must not hold back the other (a failed standard card kept the premium token unconverted).
+            int result = await CommitAsync(session, next, costs: costs, runtime: nextRuntime, source: $"month-card/convert/{id}/{newExpiry}");
+            if (result != 0)
+            {
+                _log.LogWarning("Month card {Card}: conversion of {Count} token(s) refused with code {Code} for role {Role}", id, available, result, session.Role?.Id);
+                continue;
+            }
+            if (available > 0) _log.LogInformation("Month card {Card}: {Count} token(s) turned into {Days} day(s) for role {Role}", id, available, days * available, session.Role?.Id);
         }
     }
 

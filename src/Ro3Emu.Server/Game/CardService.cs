@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Google.Protobuf;
+using Microsoft.Extensions.Options;
 using Romsg;
 using Ro3Emu.Server.Accounts;
 using Ro3Emu.Server.Data;
@@ -30,7 +31,7 @@ public sealed partial class CardService
     internal Func<GameSession, OwnerContext, Task<bool>>? RequiredCollectionRefresh { get; set; }
 
     /// <summary>ItemConfig._iCardPart → equipment grids (card names: Lunatic weapon, Poring armour, Worm Tail accessory ...).</summary>
-    private static int[] GridsFor(long part) => part switch
+    private int[] GridsFor(long part) => part switch
     {
         1 => [1],
         2 => [2],
@@ -39,6 +40,7 @@ public sealed partial class CardService
         5 => [5],
         6 => [6, 7],
         7 => [8],
+        8 when options.Value.OpenCardSlots => [9], // (not original behaviour) face cards: the face grid, see ServerOptions.OpenCardSlots
         _ => [], // 8 / 9 "Sketch Card" (MVP): target not established
     };
 
@@ -50,9 +52,10 @@ public sealed partial class CardService
     private readonly TimeProvider _clock;
     private readonly ILogger<CardService> _log;
     private readonly GameLoop _loop;
+    private readonly IOptions<ServerOptions> options;
 
     public CardService(GameData data, CharacterService character, FunctionService functions, ItemStore items, RoleStore roles,
-        SeasonService season, TimeProvider clock, ILogger<CardService> log, GameLoop loop)
+        SeasonService season, TimeProvider clock, ILogger<CardService> log, GameLoop loop, IOptions<ServerOptions> options)
     {
         this._data = data;
         this._character = character;
@@ -62,6 +65,7 @@ public sealed partial class CardService
         this._clock = clock;
         this._log = log;
         this._loop = loop;
+        this.options = options;
         character.ItemGained.Add(OnItemGained);
         character.StageFirstCardSight = StageFirstCardSight;
         character.RegisterItemAction(GainLibraryPageAction, UseLibraryPageItemAsync);
@@ -274,9 +278,13 @@ public sealed partial class CardService
         if (AddressError(grid, socket) is var address and not 0) return address;
         var row = _data.Table("EquipGridConfig").Values.FirstOrDefault(r => GameData.Int(r, "_iEquipGridType") == grid && GameData.Int(r, "_iGridCategory") is 1 or 3);
         if (row.ValueKind != JsonValueKind.Object) return ErrorCodes.EquipSlot; // (inferred) bad grid.
-        if (!row.TryGetProperty($"_kSocketOpen{socket}", out var cond) || GameData.Number(cond) is not { } id || id <= 0) return ErrorCodes.SlotSealed;
+        // OpenCardSlots (not original behaviour): every valid socket is open; the worn-weapon rule below still applies.
+        bool opened = options.Value.OpenCardSlots;
+        double id = 0;
+        if (!opened && (!row.TryGetProperty($"_kSocketOpen{socket}", out var cond) || GameData.Number(cond) is not { } number || (id = number) <= 0))
+            return ErrorCodes.SlotSealed;
         if (grid is 1 or 2 && session.Items.All(i => i.Grid != grid)) return ErrorCodes.EquipSlot; // (inferred) no worn weapon.
-        return _functions.ConditionMet(session, (long)id) ? 0 : ErrorCodes.SlotSealed;
+        return opened || _functions.ConditionMet(session, (long)id) ? 0 : ErrorCodes.SlotSealed;
     }
 
     private long Part(int entry) => _data.Row("ItemConfig", entry) is { } row ? GameData.Int(row, "_iCardPart") : 0;

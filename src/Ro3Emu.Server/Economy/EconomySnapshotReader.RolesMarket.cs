@@ -396,6 +396,22 @@ public static partial class EconomySnapshotReader
                                     Fields(historyItem, "Guid Entry Stack Pack Sort Grid IsLocked Attrs StringAttrs BindType BindExpire ExpireTimeStamp Enchantments");
                                 break;
                             case "trade_sequence": break; // Allocator, never a purse.
+                            case "vault": // PlayerTradeService: the account vault; every entry and zeny balance stays owned by the role that deposited it.
+                                Fields(row, "Account NextId Entries Zeny");
+                                if (Try(row, "Entries", out var vaultEntries))
+                                    foreach (var slot in Elements(vaultEntries))
+                                    {
+                                        Fields(slot, "Id Owner Item");
+                                        if (!Try(slot, "Item", out var stored)) throw new JsonException("Vault entry item missing.");
+                                        if (Long(stored, "Stack") <= 0) throw new FormatException("Invalid vault stack.");
+                                        Item(stored, Role(Long(slot, "Owner"), key), EconomyCompartment.Vault, key + "/" + Long(slot, "Id"));
+                                    }
+                                if (Try(row, "Zeny", out var vaultZeny))
+                                    foreach (var p in Properties(vaultZeny))
+                                        if (p.Value.GetInt64() > 0)
+                                            Currency(1, p.Value.GetInt64(), Role(long.Parse(p.Name, CultureInfo.InvariantCulture), key),
+                                                EconomyCompartment.Vault, key + "/zeny-" + p.Name);
+                                break;
                             default: Issue(EconomyIssueKind.UnknownSchema, key, "Unclassified market_record.kind."); break;
                         }
                     });

@@ -48,6 +48,9 @@
     <EmbeddedResource Include="Textures\*.png" LogicalName="textures/%(Filename)%(Extension)" />
     <Reference Include="UnityEngine.ImageConversionModule"><HintPath>$(ClientManaged)\UnityEngine.ImageConversionModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.TextRenderingModule"><HintPath>$(ClientManaged)\UnityEngine.TextRenderingModule.dll</HintPath><Private>false</Private></Reference>
+    <!-- Trade / send / vault window (TradeWindow): IMGUI drawing, and the JSON library the client itself ships. -->
+    <Reference Include="UnityEngine.IMGUIModule"><HintPath>$(ClientManaged)\UnityEngine.IMGUIModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Newtonsoft.Json"><HintPath>$(ClientManaged)\Newtonsoft.Json.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>
 
 </Project>

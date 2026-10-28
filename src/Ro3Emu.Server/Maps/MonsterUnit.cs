@@ -22,7 +22,18 @@ public sealed record MonsterTemplate(
 /// <summary>A live monster on a map (entityType 1): HP, home point, current walk segment and AI state.</summary>
 public sealed class MonsterUnit : WorldUnit
 {
-    public required MonsterTemplate Template { get; init; }
+    /// <summary>What this monster is; replaced by a stronger copy of <see cref="BaseTemplate"/> as it kills players (MonsterAiSettings kill progression).</summary>
+    public required MonsterTemplate Template { get; set; }
+    /// <summary>The template before any kill progression; null until the monster first kills a player.</summary>
+    internal MonsterTemplate? BaseTemplate { get; set; }
+    /// <summary>Players this monster killed, the levels and stat bonus (percent) it gained for it, and the EXP and item-drop bonus (percent) its kill now gives.</summary>
+    public int PlayerKills { get; set; }
+    public int LevelsGained { get; set; }
+    public double GrowthPct { get; set; }
+    public double ExpBonusPct { get; set; }
+    public double DropBonusPct { get; set; }
+    /// <summary>When it last killed a player (server ms): it then stays where it is instead of walking home and healing.</summary>
+    public long LastKillMs { get; set; }
     /// <summary>Instance-specific final outgoing damage rate; 10000 leaves field and dungeon monsters unchanged.</summary>
     public int DamageRatio { get; init; } = 10000;
     public required SpawnGroup Group { get; init; }
@@ -62,6 +73,16 @@ public sealed class MonsterUnit : WorldUnit
     public long NextSwingMs { get; set; }
     public long NextChaseMs { get; set; }
     public bool Returning { get; set; }
+    /// <summary>Where a field monster roams around after it gave up a chase and stayed put; null: its spawn point.</summary>
+    public (float X, float Z)? RoamAnchor { get; set; }
+    /// <summary>The last time something happened between the monster and its target (engaged, a hit given or taken); the time-based give-up counts from it.</summary>
+    public long ChaseActiveMs { get; set; }
+    /// <summary>The route around an obstacle found by MonsterService (NavGrid.FindPath), the waypoint being walked to, when it stops being used and the goal it was planned for.</summary>
+    internal List<(float X, float Z)>? Path { get; set; }
+    internal int PathIndex { get; set; }
+    internal long PathUntilMs { get; set; }
+    internal float PathGoalX { get; set; }
+    internal float PathGoalZ { get; set; }
     public long LastCombatMs { get; set; }
     /// <summary>Boss special-skill scheduler state, created when the boss first engages (MonsterService.BossSkills).</summary>
     public BossSkillRuntime? BossSkills { get; set; }

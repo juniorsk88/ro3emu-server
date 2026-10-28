@@ -83,6 +83,37 @@ public sealed class MountTests : IAsyncLifetime
         }
     }
 
+    /// <summary>A cast on a mount showed a delay in the client: casting now gets the role off its mount first, as hitting does.</summary>
+    [ClientDataFact]
+    public async Task CastingGetsTheRoleOffItsMountFirst()
+    {
+        await using var a = await InWorld("Alice");
+        await Gm("alice", "!job 2100");
+        await UnlockMount(a, "alice", 1501013);
+        await a.SendGameAsync(32743, new PlayerMountsSetCfgReq { MountId = 60030010 });
+        await Next(a, 32743, PlayerMountsSetCfgResp.Parser);
+        await a.SendGameAsync(32745, new PlayerRiderMountReq { Tp = (eRiderType)1 });
+        Assert.Equal(0, (await Next(a, 32745, PlayerRiderMountResp.Parser)).Result);
+        Assert.Equal(60030010, MountService.Rider(Session("alice")));
+
+        var loop = _app.Services.GetRequiredService<GameLoop>();
+        var monsters = _app.Services.GetRequiredService<MonsterService>();
+        var target = await loop.InvokeAsync(async () =>
+        {
+            var s = Session("alice");
+            s.Progress!.Skills[12004] = 1;
+            var m = await monsters.SpawnSingleAsync(s.SceneEntry, 5000001, new Ro3Emu.Server.Maps.MapPoint(s.Position.X, s.Position.Y, s.Position.Z, 0), s.InstanceId);
+            Assert.NotNull(m);
+            return m!;
+        });
+        await a.SendGameAsync(CombatService.UseSkill, new CastSkillReq { SkillId = 1200401, TargetId = target.Uid });
+        Assert.Equal(0, (await Next(a, CombatService.UseSkill, CastSkillRsp.Parser)).Result);
+        var off = await Next(a, 31049, EntityBase.Parser, p => p.NotifyType == EntityBase.Types.NotifyType.Rider && p.CurRider == 0);
+        Assert.Equal(a.Self!.Uuid, off.Uuid);
+        Assert.Equal(0, MountService.Rider(Session("alice")));
+        Assert.Equal(700, Session("alice").Speed);                  // the mount's speed is gone with it
+    }
+
     [ClientDataFact]
     public async Task RefusalsDoNotConsumeOrGrantAndInvalidRideEnumsFail()
     {
@@ -464,7 +495,14 @@ public sealed class MountTests : IAsyncLifetime
     [ClientDataFact]
     public async Task LoginOwnsTheMountOfAShopLookBoughtBeforeThePurchaseGrantedIt()
     {
-        const int DisabledLook = 60040032; // WardRobeConfig type 6 with _iDisable 1, though MountsConfig lists it.
+        // A WardRobeConfig type-6 look with _iDisable above 0 that MountsConfig still lists (which one depends on the exported
+        // client: 60040031 was one until a newer release enabled it).
+        var gameData = _app.Services.GetRequiredService<Ro3Emu.Server.Data.GameData>();
+        int DisabledLook = (int)gameData.Table("WardRobeConfig").Values
+            .Where(r => Ro3Emu.Server.Data.GameData.Int(r, "_iType") == MountSlot && Ro3Emu.Server.Data.GameData.Int(r, "_iDisable") > 0
+                && gameData.Row("MountsConfig", Ro3Emu.Server.Data.GameData.Int(r, "_iSystemID")) != null)
+            .Select(r => Ro3Emu.Server.Data.GameData.Int(r, "_iSystemID")).FirstOrDefault();
+        Assert.NotEqual(0, DisabledLook);
         var roles = _app.Services.GetRequiredService<RoleStore>();
         var loop = _app.Services.GetRequiredService<GameLoop>();
         long role;

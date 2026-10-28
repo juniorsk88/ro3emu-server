@@ -180,9 +180,11 @@ public sealed partial class CombatService
             && _data.Row("SkillConfig", effect.SkillId) != null
             ? ToPlayerAndViewersAsync(source, highLevel ? SkillEffectHigh : SkillEffect, effect) : Task.CompletedTask;
 
-    /// <summary>Server-timed bullet only when a skill script owns projectile travel.</summary>
+    /// <summary>Server-timed bullet only when a skill script owns projectile travel. SourceId 0 (start at SourcePosition,
+    /// e.g. the dropped Sag track) is allowed when the caster is the master.</summary>
     public Task SendSkillBulletAsync(GameSession source, SkillFixTimeBulletNotify bullet, bool highLevel = false) =>
-        source.Role != null && bullet.SourceId == source.Role.Id && bullet.EffectId > 0 && bullet.FixedTime > 0
+        source.Role != null && (bullet.SourceId == source.Role.Id || bullet.SourceId == 0 && bullet.MasterId == source.Role.Id)
+            && bullet.EffectId > 0 && bullet.FixedTime > 0
             && _data.Row("SkillConfig", bullet.SkillConfigId) != null
             ? ToPlayerAndViewersAsync(source, highLevel ? SkillBulletHigh : SkillBullet, bullet) : Task.CompletedTask;
 

@@ -62,6 +62,20 @@ public sealed class ServerOptions
     public int StallNameMaxLength { get; set; } = 24;
 
     /// <summary>
+    /// Address of this server's web shop. When set, an in-game purchase button (CreateOrderReq, 2001) answers with it as the
+    /// order's transaction_url, which the PC client opens in the browser (Lua_SDK_PayMgr._onCreateOrderResult); the shop does the
+    /// buying. Empty: purchases stay unavailable. A "cat" query value (Cristais for recharge, Passes for products) is added.
+    /// </summary>
+    public string StoreUrl { get; set; } = "";
+
+    /// <summary>
+    /// In-game purchases (CreateOrderReq) are paid with the credits of the web shop kept in ro3emu.db by the admin panel
+    /// (tables panel_credit and panel_ledger), 1 credit per USD of the original price; see CreditShop. Off: purchases are
+    /// unavailable, or point at <see cref="StoreUrl"/> when that is set.
+    /// </summary>
+    public bool CreditShop { get; set; }
+
+    /// <summary>
     /// The live season playbook (SeasonService). 101 is the only one this client has season content for; a value
     /// set in game with "!season" overrides it.
     /// </summary>
@@ -75,6 +89,13 @@ public sealed class ServerOptions
     /// keep pinning the original's rules; appsettings.json turns it on for the real server.
     /// </summary>
     public OpenContentOptions OpenContent { get; set; } = new();
+
+    /// <summary>
+    /// A game message sent before the stage it belongs to (no account signed in, or no role selected) is dropped
+    /// unanswered instead of reaching its handler (upstream #36). Turn off (Ro3Emu__RefuseEarlyMessages=false) only to
+    /// diagnose a client that is refused at login; the log names the first refused message of each connection.
+    /// </summary>
+    public bool RefuseEarlyMessages { get; set; } = true;
 
     /// <summary>Battle pass policy: the premium track is free for now.</summary>
     public PassOptions Pass { get; set; } = new();
@@ -171,6 +192,103 @@ public sealed class ServerOptions
     /// client data gives the Crests no source; 0 turns it off.
     /// </summary>
     public int TitleCrestPercent { get; set; } = 25;
+
+    /// <summary>
+    /// Not original behaviour, off by default: a lone player may enter and match into a team boss (the 30400 entry and the
+    /// 82681 matching) without waiting for a full team, as if every role had run the GM test aid "!dungeonsolo on". The boss
+    /// keeps its team-sized stats, so it is harder alone. Environment variable: Ro3Emu__DungeonSolo=true.
+    /// </summary>
+    public bool DungeonSolo { get; set; }
+
+    /// <summary>
+    /// Not original behaviour (the original refuses with "no permission" unless the leader starts): any member of a party may
+    /// start its team dungeon with 30400, e.g. to re-enter a story dungeon after dying in it. The party leader stays the
+    /// room's leader and confirms like every other member. Default on; Ro3Emu__DungeonAnyMemberEnter=false restores the original.
+    /// </summary>
+    public bool DungeonAnyMemberEnter { get; set; } = true;
+
+    /// <summary>
+    /// Not original behaviour: a team boss met by a party that has its minimum but not its maximum (e.g. 3 or 4 of 5) is this many
+    /// percent weaker in life and attack for each missing member (default 5, so 3 of 5 meets it 10% weaker); 0 = unchanged.
+    /// Capped at 50% in all. Below the minimum dungeon-solo.json applies instead. Environment variable: Ro3Emu__DungeonMissingMemberPercent.
+    /// </summary>
+    public int DungeonMissingMemberPercent { get; set; } = 5;
+
+    /// <summary>
+    /// Not original behaviour: a skill being cast (chant and action) is never cancelled by another skill, whatever its _bCancelCast:
+    /// a new cast during it is refused (busy) and the client's "interrupt and cast the next skill" request (31124 with NxtSkill) is
+    /// refused too, so channelled skills (Storm Gust, Lord of Vermilion...) finish even under the client's auto-battle. Moving
+    /// still cancels a cast that cannot be moved, and a plain interrupt (the cast bar's button) still works. Default on;
+    /// Ro3Emu__SkillNoCancel=false restores the original.
+    /// </summary>
+    public bool SkillNoCancel { get; set; } = true;
+
+    /// <summary>
+    /// Not original behaviour, ON by default (owner's choice): every card slot of every equipment grid counts as open. The game data gives the head
+    /// accessory (and face and mouth) grids no unlock condition at all, so their cards ("part 7 to 9") were refused with SlotSealed;
+    /// with this on the sockets are open (the worn-weapon rule of the weapon grids still applies) and face cards (part 8) go to the
+    /// face grid 9. Turn it off for the original rule with the environment variable Ro3Emu__OpenCardSlots=false.
+    /// </summary>
+    public bool OpenCardSlots { get; set; } = true;
+
+    /// <summary>
+    /// Not original behaviour: after a story dungeon (a reconstructed fight or scripted scene, no team boss) is cleared the
+    /// client shows no result window and the quest tracker keeps the dungeon's text, so nothing tells the player to press the
+    /// exit button. The players get a notice and are returned to the field after this many seconds. 0 turns it off
+    /// (Ro3Emu__StoryDungeonExitSeconds=0); the exit button still works at any time.
+    /// </summary>
+    public int StoryDungeonExitSeconds { get; set; } = 8;
+
+    /// <summary>
+    /// Not original behaviour: a party shares its kills. Every other member who is online, alive, on the killer's map and within
+    /// <see cref="PartyKillShareRange"/> gets the kill's EXP (at their own level, with the party EXP bonus) and the kill counts for
+    /// their running kill quests as if they had struck the last blow. Items still go to the killer only.
+    /// Ro3Emu__PartyKillShare=false restores the original rule (EXP and quest credit for the killer and the players who hit it).
+    /// </summary>
+    public bool PartyKillShare { get; set; } = true;
+
+    /// <summary>
+    /// DEX shortens the variable part of a skill's cast time, as the client's skill tooltip shows it: every DEX point gives 2 ChantSpeed
+    /// (AttributeConversionConfig) and the variable chant is multiplied by max(0, 1 - sqrt(ChantSpeed / 600)); the fixed part is untouched.
+    /// Ro3Emu__ChantSpeedReduction=false makes every cast last exactly _iChantFix + _iChantVar.
+    /// </summary>
+    public bool ChantSpeedReduction { get; set; } = true;
+
+    /// <summary>
+    /// Skill points are one pool shared by every class of the tree: the points left in any rank can be spent on skills of any rank you can
+    /// reach, and every class tab shows the whole pool. Ro3Emu__SharedSkillPoints=false restores one pool per rank.
+    /// </summary>
+    public bool SharedSkillPoints { get; set; } = true;
+
+    /// <summary>
+    /// Players are reported as battling (state bit 16) while they fight, which locks the skill panel, build switch, stat points, mounts,
+    /// stalls and other actions for a few seconds after the last hit. Off by default: nothing is locked in combat.
+    /// Ro3Emu__CombatLocks=true restores the lock.
+    /// </summary>
+    public bool CombatLocks { get; set; }
+
+    /// <summary>
+    /// Seconds a role must wait between two skill Preset switches (1 to 5, each with its own skill bar). The original game waits
+    /// PublicParamConfig.SchemeCD (3 s); 0 (default) switches at once. A GM can change it while the server runs with !presetcd.
+    /// </summary>
+    public int PresetSwitchCooldown { get; set; }
+
+    /// <summary>Diagnostics: logs, for every damaging player skill hit on a monster, the attacker's Matk/Atk, the monster's level, defences and element and the damage before/after rolls. Ro3Emu__DamageTrace=true.</summary>
+    public bool DamageTrace { get; set; }
+
+    /// <summary>Metres (map units) from the killer within which a party member shares the kill; 0 (default) = anywhere on the map.</summary>
+    public int PartyKillShareRange { get; set; }
+
+    /// <summary>Largest level difference (either way) between the killer and a party member who shares the kill; 0 = no limit.</summary>
+    public int PartyKillShareLevelGap { get; set; } = 20;
+
+    /// <summary>
+    /// Not original behaviour: a story task that waits for a cutscene (target 309002) is finished only when the client reports the
+    /// cutscene's end (84011). When the client hangs inside the cutscene (the "Strange Occurences" pendant scene) it never does, the player
+    /// has to close the game and the cutscene starts again at the next login. A role that logs in with such a task running for at least
+    /// this many seconds has the cutscene counted as played, so the story goes on. 0 turns it off (Ro3Emu__PlotStallSeconds=0).
+    /// </summary>
+    public int PlotStallSeconds { get; set; } = 20;
 
     /// <summary>
     /// (inferred) Seconds from a raid boss fight's start to its enrage, against which the Final Trial "more than N minutes
@@ -312,15 +430,13 @@ public sealed class OpenContentOptions
 
     /// <summary>
     /// Functions the original never opened (base level 999/9999) whose client UI and data work: 7201 Realm War map,
-    /// 70122 Totem Shop, 41 Feedback, 1000000 Adv. Guild (AdventureGroupService), 96 Valhalla Trials (ValhallaService),
-    /// 69 Season page (SeasonPageService; level 50 until the 20 Oct 2026 client closed it with condition 2000062, [1002,9999])
-    /// (Feedback's panel comes from Ro3Emu.ClientHooks.FeedbackButton, its backend is FeedbackService), 14 Title (TitleService; its
-    /// widget is hosted by Ro3Emu.ClientHooks.TitleButton). Shells without a working panel (Academy 34...) stay closed so the menu shows no dead
+    /// 70122 Totem Shop, 41 Feedback, 1000000 Adv. Guild (AdventureGroupService), 96 Valhalla Trials (ValhallaService)
+    /// (Feedback's panel comes from Ro3Emu.ClientHooks.FeedbackButton, its backend is FeedbackService), 69 the season page (this export gates it at base level 9999; its backend is SeasonPageService and it was opened at level 50 before). Shells without a working panel (Title 14, Academy 34...) stay closed so the menu shows no dead
     /// buttons; a function joins this list together with its backend. Novice Challenge (90, activity 112) is left out
     /// (owner, 2026-10-11): its 15 random event texts are "Event Text..."/"Option A" filler and the first node's
     /// dialogues 9901-9904 do not exist, so the original never finished it.
     /// </summary>
-    public long[] Functions { get; set; } = [7201, 70122, 41, 1000000, 96, 69, 14];
+    public long[] Functions { get; set; } = [7201, 70122, 41, 1000000, 96, 69];
 
     /// <summary>
     /// NewActivityConfig rows whose own open condition is a level the cap never reaches (e.g. 112 Novice Challenge).

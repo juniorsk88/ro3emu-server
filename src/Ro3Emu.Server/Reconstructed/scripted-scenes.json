@@ -7,6 +7,7 @@
     "gate": "An interaction's _iNPCCondition 1004 CheckHaveBuff (LC_CommonCondition.lua:180-196) asks whether the actor carries a BuffConfig group (_iBuffID). The client shows the button only then, so the step that waits on an interaction gives its actor that buff.",
     "story": "Dungeon var 100020016 (DungeonVariableFunctionConfig: start function PlayCutSceneStory, array) with [plot] makes the client play PlotInterpretation <plot> (LC_DunGeon_Actions.lua:3476-3490, LC_CutSceneManager.PlayStory). At its end (also when skipped) the plot's action 601 VideoPerformEndClient sends 84011 PlotActingEnd {plotId} (LC_GuildServer.PlotActionEnd), its action 150 PlotActingTrigger sends 84012 {plotId} (LC_TaskHelper.PlotActingTriggerReq), and 32709 follows; either one completes the step, neither expects a reply. Sent once in a 30404 DungeonEventDungeonVarChange: LC_DunGeon_Base._pushDungeonVars calls the function on every push, so it is never kept in the 30401 snapshot.",
     "region": "The scene editor's server regions (regionType 2; no client consumer registers them with LC_TriggerAreaManager, so the client never reports them): the server tests the participant's walked position with LC_AreaHelper.CheckInArea's geometry (shapeType 1 circle radius = length, 2 rectangle length x width turned by direction).",
+    "guide": "Dungeon var 10021 PGuideWayList (LC_DunGeon_VarDefine, table of numbers, component GuideGfx) lists scene-editor guide point ids (m_kGuidePoints); LC_SceneCom_GuideGfx draws each one's pointList as a LineRenderer on the floor (enum_FxGuideArrow.Default) and removes the ones no longer listed. Sent at the step's start; the original's trigger for it is not in the client (inferred).",
     "point": "No region exists; the participant's walked position within radius metres of the scene-editor point (inferred)."
   },
   "scenes": {
@@ -489,6 +490,7 @@
         {
           "quest": 2,
           "stage": "Retrieve the Professor's instrument",
+          "guide": [38],
           "complete": [
             { "point": 37, "radius": 4, "why": "mark point 37, where guide point 38 leads from the game area" }
           ]

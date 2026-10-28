@@ -13,6 +13,11 @@
 - [Open content](guide/open-content.md): every feature the client can show is playable (`Ro3Emu:OpenContent`)
 - [Bug reports](guide/feedback.md): the in-game Feedback button and `/bug`, and how to read the reports
 - [Launcher and patch repository](guide/launcher.md): hosting the client for your players
+- [Client release 140075: the signed-origins guard](guide/client-origin-guard.md): why the login did nothing and what the patch changes
+- [The HUD ping](guide/hud-ping.md): why the indicator showed 0 ms and the tag the `Pong` must echo
+- [Monster chase AI](guide/monster-ai.md): when monsters give up a chase and whether they return and heal (`monster-ai.json`, admin panel)
+- [Fixes and improvements log](guide/fixes-log.md): every sprite, NPC and bug fix, with cause and how it was done
+- [NPC services](guide/npc-services.md): the shop and refine options that merchant and smith NPCs get in their dialogue
 - [Tests](guide/testing.md): content tests on your exported data, rule tests on the invented fixture that CI runs
 - [Config tables](guide/config-tables.md): the typed views of the client's tables and the startup check of the export
 - [Security model](systems/security.md): what the server exposes, what it trusts, and how to report a vulnerability

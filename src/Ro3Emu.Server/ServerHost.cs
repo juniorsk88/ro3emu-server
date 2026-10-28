@@ -164,6 +164,10 @@ public static class ServerHost
         builder.Services.AddSingleton<ChatService>();
         builder.Services.AddSingleton<FeedbackService>();
         builder.Services.AddSingleton<GmCommands>();
+        builder.Services.AddSingleton<CreditShop>();
+        builder.Services.AddSingleton<CurrencyExchange>();
+        builder.Services.AddSingleton<DungeonSoloScale>();
+        builder.Services.AddHostedService<CreditShopDelivery>();
         builder.Services.AddSingleton<Ro3Emu.Server.Data.GameData>();
         builder.Services.AddSingleton<SessionRegistry>();
         builder.Services.AddSingleton<GateAuthRegistry>();
@@ -187,6 +191,8 @@ public static class ServerHost
         builder.Services.AddSingleton<Game.Messaging.IMessageModule, AdventureGroupMessages>();
         builder.Services.AddSingleton<Game.Messaging.IMessageModule, Voice.VoiceTicketService>();
         builder.Services.AddSingleton<Game.Messaging.IMessageModule>(sp => sp.GetRequiredService<GuildVoiceService>());
+        builder.Services.AddSingleton<PlayerTradeService>();
+        builder.Services.AddSingleton<Game.Messaging.IMessageModule>(sp => sp.GetRequiredService<PlayerTradeService>());
         builder.Services.AddSingleton<GameMessageHandler>();
         builder.Services.AddSingleton(sp => GateCrypto.LoadOrCreate(options.DataDir, sp.GetRequiredService<ILogger<GateCrypto>>()));
         builder.Services.AddSingleton<IMicroService, LoginService>();
@@ -223,6 +229,9 @@ public static class ServerHost
         app.Services.GetRequiredService<Diagnostics.ServerMetrics>().Owners = app.Services.GetRequiredService<Game.Ownership.OwnerRegistry>();
         // Mount energy meters (EnergyConfig._iBelongMount): BuffService cannot take MountService (MountService -> SceneService -> BuffService).
         app.Services.GetRequiredService<MountService>().Changed.Add(app.Services.GetRequiredService<BuffService>().MountsChangedAsync);
+        // A cast gets the role off its mount first (CombatService does not know MountService: MountService -> SceneService -> BuffService -> CombatService).
+        app.Services.GetRequiredService<CombatService>().SkillNoCancel = app.Services.GetRequiredService<IOptions<ServerOptions>>().Value.SkillNoCancel;
+        app.Services.GetRequiredService<CombatService>().BeforeCast.Add(app.Services.GetRequiredService<MountService>().DismountForCastAsync);
         app.Use(async (context, next) =>
         {
             if (HttpMethods.IsPost(context.Request.Method) && app.Services.GetRequiredService<GameLoop>().Phase != GameLoopPhase.Accepting)
@@ -511,6 +520,7 @@ internal sealed class GameLoopTickers(IServiceProvider services) : IHostedServic
         Add<DungeonMatchService>();
         Add<GatheringService>();
         Add<TotemEffects>();
+        Add<Diagnostics.SessionCensus>();
         Add<Game.Persistence.PositionPersistence>();
         Add<Game.Persistence.SettingsPersistence>();
         Add<Diagnostics.SessionCensus>();

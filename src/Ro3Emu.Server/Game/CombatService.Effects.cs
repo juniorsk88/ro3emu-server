@@ -77,6 +77,14 @@ public sealed partial class CombatService
         // SkillConfig._bMovement is enum_SkillLockMoveType (may the caster walk while casting), not a displacement.
         await MoveCasterAsync(s, action);
         if (!CurrentCastMap(s, action)) return;
+        // The client plays the cast timeline itself. Projectile skills that the timeline does not spawn get one
+        // SkillFixTimeBullet; the damage then waits for the flight so the numbers land with it.
+        int flight = await SendProjectileAsync(s, action, VisualOf(row));
+        if (flight > 0)
+        {
+            await Task.Delay(flight);
+            if (!CurrentCastMap(s, action)) return;
+        }
         await ApplyEffectsAsync(s, action, action.Request.TargetPos ?? action.Origin);
     }
 
@@ -133,7 +141,7 @@ public sealed partial class CombatService
                 .OrderBy(p => p.Distance).ThenBy(p => p.Id).Take(maxTargets).Select(p => p.Id).ToHashSet();
             targets.RemoveAll(m => !selected.Contains(m.Uid));
             await HitEventPlayersAsync(s, playerTargets.Where(p => selected.Contains(p.Role!.Id)).ToArray(),
-                row, action.Request.SkillId, HitEffect(GameData.Int(row, "_iScriptShow")), action.Id, CanApplyMoreEffects,
+                row, action.Request.SkillId, VisualOf(row).HitEffect, action.Id, CanApplyMoreEffects,
                 action.GuardianDamage == null ? null : (id, amount) => RecordGuardianDamage(action, id, amount), center);
             if (IsGuardianEffect(row))
                 await GuardianPlayerDebuffsAsync(s, row, playerTargets.Where(p => selected.Contains(p.Role!.Id)),
@@ -165,7 +173,7 @@ public sealed partial class CombatService
         var hit = new SkillHitInfo
         {
             SrcID = field?.Uid ?? action.SourceId, SkillId = action.Request.SkillId, SessionId = action.Id,
-            RootCtxGuid = action.Id, ComboIndex = action.Request.ComboIndex, ShowPoint = HitEffect(GameData.Int(row, "_iScriptShow")),
+            RootCtxGuid = action.Id, ComboIndex = action.Request.ComboIndex, ShowPoint = VisualOf(row).HitEffect,
             Split = HitSplit(row),
             SrcElement = (int)Math.Max(1, GameData.Int(row, "_iEleType")),
         };
@@ -183,6 +191,10 @@ public sealed partial class CombatService
                 if (damage)
                 {
                     var (amount, result) = MonsterHitDamage(s, attacker, target, row, script);
+                    if (options.Value.DamageTrace && amount > 0)
+                        _log.LogInformation("Damage {Role} skill {Skill} Matk {Matk} Atk {Atk} Lv {Lv} -> npc {Npc} Lv {TLv} Mdef {Mdef} Def {Def} ele {Ele}: final {Amount}",
+                            s.Role!.Name, action.Request.SkillId, attacker.Matk, attacker.Atk, attacker.Level, target.Template.NpcId, target.Template.Level, target.Template.Mdef,
+                            target.Template.Def, target.Template.Element, amount);
                     long beforeHp = target.Hp;
                     target.Hp = Math.Max(0, beforeHp - amount);
                     long effective = beforeHp - target.Hp;
@@ -263,6 +275,38 @@ public sealed partial class CombatService
                 foreach (var viewer in processed.SelectMany(t => t.Viewers).Concat(sourceViewers).Distinct()) await viewer.SendGameAsync(SkillHit, hit);
                 if (CurrentCaster() && field?.Trap == true)
                     await ToPlayerAndViewersAsync(s, TrapDamage, new TrapDamageNtf { SkillConfigId = action.Request.SkillId, DamageValue = hit.Dsts.Sum(d => d.Damage), Pos = center.Clone() });
+            }
+            // A skill that only buffs, cleanses or debuffs has no damage entry above, so the client would play its cast and
+            // nothing else: Blessing's angel glow (fx_buff_angelblessing) and Increase AGI's swirl are the type-3 hit effect,
+            // which the client draws only for a SkillHit dst. DamageShare with a Normal result draws that effect and no number
+            // (LC_DamageHelper: the hud word type is None). Fields are skipped so a ticking zone does not replay it.
+            if (!damage && field == null && CurrentCaster() && VisualOf(row) is { HitHasGfx: true } shown)
+            {
+                var show = new SkillHitInfo
+                {
+                    SrcID = action.SourceId, SkillId = action.Request.SkillId, SessionId = action.Id, RootCtxGuid = action.Id,
+                    ComboIndex = action.Request.ComboIndex, ShowPoint = shown.HitEffect, Split = 1,
+                    SrcElement = (int)Math.Max(1, GameData.Int(row, "_iEleType")),
+                };
+                var seers = new List<GameSession>();
+                if (friendly)
+                    foreach (var recipient in allies)
+                    {
+                        show.Dsts.Add(new DamageInfo { DstID = recipient.Role!.Id, DamageType = DamageType.DamageShare, DstElement = 1 });
+                        seers.Add(recipient);
+                        seers.AddRange(_world.Viewers(recipient));
+                    }
+                foreach (var target in processed.Where(t => !t.Dead && t.Hp > 0))
+                {
+                    show.Dsts.Add(new DamageInfo { DstID = target.Uid, DamageType = DamageType.DamageShare, DstElement = target.Template.Element });
+                    seers.AddRange(target.Viewers);
+                }
+                if (show.Dsts.Count > 0)
+                {
+                    seers.Add(s);
+                    seers.AddRange(_world.Viewers(s));
+                    foreach (var viewer in seers.Distinct()) await viewer.SendGameAsync(SkillHit, show);
+                }
             }
             foreach (var target in processed)
             {
@@ -649,6 +693,12 @@ public sealed partial class CombatService
         {
             case "Fire_Wall" or "Quagmire" or "Fire_Pillar" or "Meteor_Storm" or "Lord_of_Vermilion" or "Storm_Gust" when logic.Length >= 3:
                 npc = (int)logic[0]; interval = (int)logic[1]; duration = (int)logic[2]; break;
+            case "Magnus_Exorcismus" when logic.Length >= 2:
+                // Exorciser cross: _kLogicData [NPC, seconds it lasts, ...] and _kDescData[4] is the seconds between hits
+                // ("for the next 4 sec. ... every 0.5 sec."). Without this case the NPC (the cross on the floor) never spawned.
+                npc = (int)logic[0]; duration = (int)(logic[1] * 1000);
+                interval = Numbers(row, "_kDescData") is { Length: > 4 } desc && desc[4] > 0 ? (int)(desc[4] * 1000) : 500;
+                break;
             case "Safety_Wall" or "Pneuma" when logic.Length >= 8:
                 npc = (int)logic[5]; duration = (int)logic[2]; radius = (float)(logic[7] / 100);
                 protection = script == "Safety_Wall" ? 1 : 2; charges = script == "Safety_Wall" ? (int)logic[1] : int.MaxValue; break;

@@ -16,7 +16,8 @@ public enum EconomyCompartment
     Stall = 6, LegacyMail = 7, AuctionLot = 8, AuctionReserve = 9, AuctionPrebuy = 10,
     AuctionBonus = 11, GuildTreasury = 12, GuildMarket = 13, CaravanPending = 14,
     TerritoryPending = 15, TerritoryDrop = 16, TerritoryBid = 17, EscortGoods = 18,
-    EscortListing = 19, EscortCart = 20, EscortCargo = 21, Pending = 22, Recovery = 23
+    EscortListing = 19, EscortCart = 20, EscortCargo = 21, Pending = 22, Recovery = 23,
+    Vault = 24
 }
 
 /// <summary>Location and identity are independent of denomination; archive epochs belong in both where applicable.</summary>

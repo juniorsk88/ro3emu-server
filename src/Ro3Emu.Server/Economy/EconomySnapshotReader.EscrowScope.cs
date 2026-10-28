@@ -217,6 +217,17 @@ public static partial class EconomySnapshotReader
                                 EconomyCompartment.LegacyMail, key + "/currency-" + p.Name, p.Value.GetInt64());
                         break;
                     case "trade_history": case "trade_sequence": break;
+                    case "vault":
+                        if (Try(row, "Entries", out var vaultEntries))
+                            foreach (var slot in Elements(vaultEntries))
+                                ScopedItem(Prop(slot, "Item"), new(EconomyOwnerKind.Role, Id(Long(slot, "Owner"))),
+                                    EconomyCompartment.Vault, key + "/" + Long(slot, "Id"));
+                        if (Try(row, "Zeny", out var vaultZeny))
+                            foreach (var p in Properties(vaultZeny))
+                                if (p.Value.GetInt64() > 0) ScopedHold(new(EconomyAssetKind.Currency, 1),
+                                    new(EconomyOwnerKind.Role, Id(long.Parse(p.Name, CultureInfo.InvariantCulture))),
+                                    EconomyCompartment.Vault, key + "/zeny-" + p.Name, p.Value.GetInt64());
+                        break;
                     default: throw new InvalidDataException("Unclassified E03 market kind " + kind);
                 }
             }

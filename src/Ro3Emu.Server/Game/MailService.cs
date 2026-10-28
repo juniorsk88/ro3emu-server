@@ -278,6 +278,36 @@ public sealed partial class MailService(AccountStore accounts, RoleStore roles, 
         return id;
     }
 
+    /// <summary>
+    /// A market-style letter (instances in Items, currency amounts) with its own text, for player-to-player trade, sends and
+    /// vault withdrawals (PlayerTradeService). Same guards and no-expiry rule as <see cref="DeliverMarket"/>; never expires
+    /// while it holds assets.
+    /// </summary>
+    internal string DeliverMarketRaw(RoleItemPlanBuilder transaction, DateTimeOffset now, long role, string title, string content,
+        string sender, IEnumerable<InvItem>? items, IReadOnlyDictionary<int, long>? currency)
+    {
+        if (role <= 0) throw new ArgumentOutOfRangeException(nameof(role));
+        var attached = items?.Select(i => i.Clone()).ToList() ?? [];
+        if (attached.Any(i => i.Entry is 100 or 101 || i.Entry <= 0 || i.Stack <= 0 || i.Grid != 0
+            || data.Row("ItemConfig", i.Entry) is not { } row || GameData.Int(row, "_iType") == 1))
+            throw new ArgumentException("Invalid mail item", nameof(items));
+        var amounts = currency?.Where(p => p.Value != 0).ToDictionary(p => p.Key, p => p.Value) ?? new();
+        if (amounts.Any(p => p.Key <= 0 || p.Value <= 0 || data.Row("ItemConfig", p.Key) is not { } row
+            || GameData.Int(row, "_iType") != 1))
+            throw new ArgumentException("Invalid mail currency", nameof(currency));
+        var box = CaptureMailbox(role, transaction);
+        Purge(box, now.ToUnixTimeSeconds(), transaction, role);
+        string id = NextId(box, now);
+        box.Letters.Add(new Letter
+        {
+            Id = id, Title = title, Content = content, Sender = sender, CreatedTime = now.ToUnixTimeSeconds(),
+            RemoveTime = attached.Count > 0 || amounts.Count > 0 ? 0 : now.AddDays(7).ToUnixTimeSeconds(),
+            Items = attached, Currency = amounts,
+        });
+        transaction.RoleBlob(role, "mailbox", JsonSerializer.SerializeToUtf8Bytes(box));
+        return id;
+    }
+
     private static string NextId(Mailbox box, DateTimeOffset now)
     {
         box.NextId = Math.Max(box.NextId + 1, now.UtcTicks);

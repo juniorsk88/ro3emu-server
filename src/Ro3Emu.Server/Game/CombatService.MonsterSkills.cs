@@ -22,7 +22,7 @@ public sealed partial class CombatService
         if (caster.Dead || caster.Hp <= 0 || _buffs.UnitForbidden(caster, ForbiddenState.CastSkill)) return 0;
         int skillId = (int)GameData.Int(row, "_iID");
         if (session <= 0) session = ++_sessionIds;
-        int show = HitEffect(GameData.Int(row, "_iScriptShow"));
+        int show = HitEffect(row);
         int element = (int)GameData.Int(row, "_iEleType") is var e and > 1 ? e : caster.Template.Element;
         var attacker = MonsterFighter(caster);
         int hits = 0;
@@ -61,6 +61,8 @@ public sealed partial class CombatService
                 await FightingAsync(p);
                 if (hp == 0)
                 {
+                    try { await _monsters.OnKilledPlayerAsync(caster, p); }   // kill progression (MonsterAiSettings), before the death handlers
+                    catch (Exception growthError) { _log.LogError(growthError, "Monster kill progression failed"); }
                     await PlayerDiesAsync(p);
                     continue;
                 }

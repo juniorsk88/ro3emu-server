@@ -41,6 +41,25 @@ namespace Ro3Emu.ClientHooks
             "GetCardGearLabel", "GetCardLevel", "GetIconMax", "IsBan", "IsEmptyLock", "ShowAnim",
         };
 
+        /// <summary>Where the in-game "Recarga" button (publicparamconfig.RechargeExternalUrl, the publisher's console in the original game) sends the player:
+        /// this server's own web shop. &lt;client&gt;/ro3emu/store.url overrides it (one line with the address).</summary>
+        internal const string DefaultStoreUrl = "https://ro3.system89.com.br/painel?tab=shop";
+
+        internal static string StoreUrl()
+        {
+            try
+            {
+                string file = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(Application.dataPath), "ro3emu", "store.url");
+                if (System.IO.File.Exists(file))
+                {
+                    string line = System.IO.File.ReadAllText(file).Trim();
+                    if (line.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || line.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) return line;
+                }
+            }
+            catch (Exception) { /* unreadable override: use the default */ }
+            return DefaultStoreUrl;
+        }
+
         /// <summary>Must equal ServerOptions.StallNameMaxLength.</summary>
         internal const int StallNameMaxLength = 24;
 
@@ -91,18 +110,23 @@ namespace Ro3Emu.ClientHooks
                 }
                 var param = Module(manager, global, "publicparamconfig");
                 if (param != null) param.Obf_luA<string, object>("StallsNameCharacterLimit", (long)StallNameMaxLength);
+                if (param != null) param.Obf_luA<string, object>("RechargeExternalUrl", StoreUrl());
                 _doneEnv = env;
+                TradeWindow.Install(); // IMGUI trade / send / vault window; needs no Lua, and guards itself (once, kill switch)
                 PatchCountdowns(manager, global);
+                PatchPayInit(manager, global);
+                SoloDungeonEntry.Install(Module(manager, global, "ui_sys_dungeon_rightinfowidgetctrl"), Module(manager, global, "lc_dal_multiplayerdungeon"));
                 var functionHelper = Module(manager, global, "lc_functionhelper");
                 FeedbackButton.Install(global, functionHelper);
                 PassChallenges.Install(global);
                 TitleButton.Install(manager, global);
+                LevelUpEffect.Install(global);
                 ServerDayGates.Install(global, functionHelper, Module(manager, global, "lc_conditiondefine"),
                     global.Obf_RuA<Obf_R.Obf_ff>("LC_SeasonHelper") ?? Module(manager, global, "lc_seasonhelper"),
                     global.Obf_RuA<Obf_R.Obf_ff>("LC_SeasonExplorationHelper") ?? Module(manager, global, "lc_seasonexplorationhelper"));
                 PersonalCards.Install((Obf_R.Obf_Cf)env, Module(manager, global, "lc_dal_personal"));
                 Debug.Log("[Ro3Emu.LuaPatches] lc_itemshowfunc: " + added + " card show-func method(s) added; stall name limit "
-                    + (param != null ? StallNameMaxLength.ToString() : "not set (publicparamconfig missing)"));
+                    + (param != null ? StallNameMaxLength.ToString() : "not set (publicparamconfig missing)") + "; recharge url " + StoreUrl());
             }
             catch (Exception e)
             {
@@ -147,6 +171,29 @@ namespace Ro3Emu.ClientHooks
                 Debug.Log("[Ro3Emu.LuaPatches] Prelude panel countdown " + (_evePanelOriginal != null ? "wrapped" : "method not found"));
             }
         }
+
+        private static Obf_R.Obf_ff _payClass;
+        private static readonly SelfMethod PayInitWrapper = PayInit;
+
+        /// <summary>
+        /// Lua_SDK_PayMgr.Init asks the store SDK (MetaSDKUtil.ReqSkuInfo) for the product prices. This build has no store SDK
+        /// ("sdk proxy is not init"), the call throws, and the factory only caches a manager after Init returns, so every
+        /// Lua_SDK_Factory.GetPayMgr() fails: no purchase button (battle pass, month card, crystal packs) ever reaches
+        /// ReqPurchaseRequest and the server never sees CreateOrderReq. Init becomes a no-op; prices come from the data tables.
+        /// </summary>
+        private static void PatchPayInit(LA_LuaManager manager, Obf_R.Obf_ff global)
+        {
+            _payClass = null;
+            if (Module(manager, global, "lua_sdk_paymgr") is { } pay)
+            {
+                _payClass = pay;
+                bool has = pay.Obf_RuA<Obf_R.Obf_Ef>("Init") != null;
+                if (has) pay.Obf_luA<string, SelfMethod>("Init", PayInitWrapper);
+                Debug.Log("[Ro3Emu.LuaPatches] pay manager Init " + (has ? "skipped (no store SDK)" : "method not found"));
+            }
+        }
+
+        private static void PayInit(Obf_R.Obf_ff self) { /* no store SDK in this build: nothing to query */ }
 
         private static void UpdateCountdownState(Obf_R.Obf_ff self)
         {

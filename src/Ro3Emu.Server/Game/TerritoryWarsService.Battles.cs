@@ -497,7 +497,7 @@ public sealed partial class TerritoryWarsService
                 if (_data.Table("PublicParamConfig").TryGetValue("TerritoryFatigueBuffPileAddFromKill", out var tiers))
                     foreach (var tier in tiers.EnumerateArray())
                         if (role.FatigueKills >= GameData.Number(tier[0]) && role.FatigueKills <= GameData.Number(tier[1]))
-                            role.Fatigue = (int)Math.Min(20, role.Fatigue + (GameData.Number(tier[2]) ?? 0));
+                            role.Fatigue = (int)Math.Min(FatigueMax, role.Fatigue + (GameData.Number(tier[2]) ?? 0));
                 nextRole = role;
             }
             var transaction = _roles.NewTransaction();
@@ -665,17 +665,19 @@ public sealed partial class TerritoryWarsService
         if (Own(s) is { } guild) info.GuildValorPoints[guild.Id] = r.Valor;
         return CharacterService.SyncAsync(s, 5020, info);
     }
+    /// <summary>Charges at which fatigue teleports the player out (PublicParamConfig TerritoryFatigueMax, default 20 = the client's own limit).</summary>
+    private int FatigueMax => (int)Math.Clamp(Param("TerritoryFatigueMax", 20), 1, 200);
     private async Task FatigueAsync(GameSession s, Battle b)
     {
         var r = LoadRole(s.Role!.Id);
-        if (r.Fatigue >= 20)
+        if (r.Fatigue >= FatigueMax)
         { await FatigueReturnAsync(s); return; }
         long period = Math.Max(1, Param("TerritoryFatigueBuffPileAddTime", 60000000) / 1000);
         int buffId = (int)Param("TerritoryFatigueBuffId", 4920001);
         bool changed = _clock.Now >= r.LastFatigue + period;
         if (changed)
         {
-            r.Fatigue = (int)Math.Min(20, r.Fatigue + (_clock.Now - r.LastFatigue) / period);
+            r.Fatigue = (int)Math.Min(FatigueMax, r.Fatigue + (_clock.Now - r.LastFatigue) / period);
             r.LastFatigue = _clock.Now; await SaveRoleAsync(s.Role!.Id, r); s.TerritoryWars = r;
         }
         if (changed || s.Buffs.FirstOrDefault(b => b.ConfigId == buffId)?.PileCount != (r.Fatigue == 0 ? null : r.Fatigue))
@@ -684,7 +686,7 @@ public sealed partial class TerritoryWarsService
             await RemoveBuffAsync(s, buffId);
             if (r.Fatigue > 0) await _buffs.SetPileCountAsync(s, buffId, int.MaxValue, s.Role.Id, r.Fatigue);
         }
-        if (r.Fatigue >= 20) await FatigueReturnAsync(s);
+        if (r.Fatigue >= FatigueMax) await FatigueReturnAsync(s);
     }
     private async Task FatigueReturnAsync(GameSession s)
     {

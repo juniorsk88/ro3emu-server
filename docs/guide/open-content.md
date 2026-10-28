@@ -42,7 +42,7 @@ content open turns it on:
   - the season page (top bar "Season", function 69) in the season's first week: stage 101001 (days 1-7) is hidden
     (`MultiverseStage._iHide`), so `LC_SeasonHelper.GetCurrentStageId` is nil until day 8 and the button only pops
     UIWords 70039, and the chapter panel locks every stage after the current one. While the server opens content (it
-    reports open a function no level reaches: 7201, 70122, 41) the wrapped `GetCurrentStageId` answers the last
+    reports open a function no level reaches: 7201, 70122, 41, 69) the wrapped `GetCurrentStageId` answers the last
     visible stage with activities (101004), so the page opens and every chapter counts as started (the break stage
     101005 is kept when reached). The stage clock (82707) is not moved;
   - Season Exploration chapters (activity 111, `ExplorePhaseConfig` phases on days 8/10/12 to 14): the wrapped

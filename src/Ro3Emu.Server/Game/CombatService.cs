@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Google.Protobuf;
+using Microsoft.Extensions.Options;
 using Romsg;
 using Ro3Emu.Server.Accounts;
 using Ro3Emu.Server.Data;
@@ -60,6 +61,7 @@ public sealed partial class CombatService : IGameTicker
     private readonly GameData _data;
     private readonly GameLoop _loop;
     private readonly ILogger<CombatService> _log;
+    private readonly IOptions<ServerOptions> options;
     /// <summary>The combat dice (hit, damage float, crit, effect procs). Tests whose subject is not chance swap in
     /// fixed rolls, so a prepared lethal basic attack cannot randomly miss (the "first swing missed" flaky class).</summary>
     internal CombatRolls Rolls { get; set; } = new();
@@ -268,7 +270,7 @@ public sealed partial class CombatService : IGameTicker
 
     public CombatService(World world, MonsterService monsters, CharacterService character, SkillService skills, SceneService scene, BuffService buffs,
         WorldData worldData, SessionRegistry sessions, GameData data, GameLoop loop, ILogger<CombatService> log, PetService pets,
-        SeasonTalentService talents)
+        SeasonTalentService talents, IOptions<ServerOptions> options)
     {
         this._world = world;
         this._monsters = monsters;
@@ -281,6 +283,7 @@ public sealed partial class CombatService : IGameTicker
         this._data = data;
         this._loop = loop;
         this._log = log;
+        this.options = options;
         _pets = pets;
         WireGuardians();
         monsters.Attack = MonsterAttackAsync;
@@ -314,23 +317,9 @@ public sealed partial class CombatService : IGameTicker
         _log.LogDebug("{Name} locks {Target}", s.Role?.Name, req.EnemyId);
     }
 
-    /// <summary>The template's damage EffectData (hit fx + flinch): the first with m_kDamage in [show*100, show*100+99].</summary>
-    private int HitEffect(long scriptShow)
-    {
-        var effects = _data.SkillTemplateTable("Lua_Config_EffectData");
-        for (long id = scriptShow * 100; id < scriptShow * 100 + 100; id++)
-            if (effects.TryGetValue(id.ToString(), out var e) && e.TryGetProperty("m_kDamage", out _)) return (int)id;
-        return 1000002;
-    }
+    /// <summary>The effect id the client draws a hit with: the skill's type-3 (m_kActionDamge) effect. See <see cref="VisualOf"/>.</summary>
+    private int HitEffect(JsonElement row) => VisualOf(row).HitEffect;
 
-    /// <summary>
-    /// SkillHitInfo.split: how many damage words the client shows for one hit. SkillConfig._kShowDmg holds one count
-    /// per show attack point and only the server reads it. LC_DamageHelper.ProcessDamageWord divides the damage into
-    /// that many words and, for the caster, adds a running total (Dmg_Accumulate) for skills with _iAccumDmgType, so
-    /// with split 1 the total repeats the hit. A cast resolves at its first attack point, so the first count applies
-    /// (inferred for skills with several points).
-    /// </summary>
-    private static int HitSplit(JsonElement row) => (int)Math.Max(1, new SkillConfig(row).ShowDmg.FirstOrDefault(1));
 
     // ---- monsters hitting players ----
 
@@ -384,7 +373,7 @@ public sealed partial class CombatService : IGameTicker
             var attacker = new Fighter(stats[103], stats[104], stats[109], stats[111], pet.Level, pet.Element);
             var hit = new SkillHitInfo
             {
-                SrcID = pet.Uid, SkillId = skillId, ShowPoint = HitEffect(GameData.Int(row, "_iScriptShow")),
+                SrcID = pet.Uid, SkillId = skillId, ShowPoint = HitEffect(row),
                 SessionId = castId, SrcElement = pet.Element,
             };
             var processed = new List<MonsterUnit>();
@@ -568,7 +557,14 @@ public sealed partial class CombatService : IGameTicker
                 foreach (var handler in TakenAsync) await handler(m, p, damage);
                 await FightingAsync(p);
                 await FightingAsync(m);
-                if (hp == 0) await PlayerDiesAsync(p);
+                if (hp == 0)
+                {
+                    // Kill progression (MonsterAiSettings) first: it must not wait behind the death handlers, and the
+                    // monster's AI must already know it made the kill when it sees the target dead.
+                    try { await _monsters.OnKilledPlayerAsync(m, p); }
+                    catch (Exception growthError) { _log.LogError(growthError, "Monster kill progression failed"); }
+                    await PlayerDiesAsync(p);
+                }
             }
             finally { if (hp == 0) ReleaseDeathPublication(p); }
         });
@@ -707,7 +703,9 @@ public sealed partial class CombatService : IGameTicker
     private async Task FightingAsync(GameSession p)
     {
         p.LastCombatMs = Now;
-        if ((p.StatusBits & FightBit) != 0) return;
+        // The client locks the skill panel, build switch, stat points and more while the server reports the Battling state, so a
+        // player is never reported as battling unless CombatLocks is on.
+        if (!options.Value.CombatLocks || (p.StatusBits & FightBit) != 0) return;
         p.StatusBits |= FightBit;
         await ToPlayerAndViewersAsync(p, AoiAttrChange, Status(p.Role!.Id, p.StatusBits));
     }

@@ -14,7 +14,8 @@ public interface IMicroService
     ValueTask<object?> InvokeAsync(MicroSession session, string method, object? args);
 }
 
-public sealed partial class MicroServiceRouter(IEnumerable<IMicroService> services, ILogger<MicroServiceRouter> log, Game.GameLoop? loop = null, Game.Ownership.OwnerRegistry? owners = null, Game.SessionRegistry? sessions = null)
+public sealed partial class MicroServiceRouter(IEnumerable<IMicroService> services, ILogger<MicroServiceRouter> log, Game.GameLoop? loop = null, Game.Ownership.OwnerRegistry? owners = null, Game.SessionRegistry? sessions = null,
+    Microsoft.Extensions.Options.IOptions<ServerOptions>? options = null)
 {
     private readonly Dictionary<string, IMicroService> _services = services.ToDictionary(s => s.Name);
 
@@ -41,7 +42,7 @@ public sealed partial class MicroServiceRouter(IEnumerable<IMicroService> servic
 
     public async ValueTask<byte[]> InvokeAsync(MicroSession session, string service, string method, ReadOnlyMemory<byte> packedArgs)
     {
-        if (session.Account == null && !AllowedBeforeSignIn(service, method))
+        if (session.Account == null && (options?.Value.RefuseEarlyMessages ?? true) && !AllowedBeforeSignIn(service, method))
         {
             // Refused before the arguments are read and before any reservation: the client never calls it then.
             if (!session.RefusalLogged)

@@ -200,7 +200,11 @@ public sealed partial class CharacterService
             req.ItemGUID, item?.Entry, grid, result);
         if (result != 0)
         {
-            await session.SendGameAsync(EquipItemOpr, new EquipItemOprResp { Result = result, Opr = req.Opr, Pos = req.Pos, ItemGUID = req.ItemGUID });
+            await session.SendGameAsync(EquipItemOpr, new EquipItemOprResp
+            {
+                Result = result, Opr = req.Opr, Pos = req.Pos, ItemGUID = req.ItemGUID,
+                RefineEffectLv = Resonance(session, "RefiningEffectTable"), StrengthenEffectLv = Resonance(session, "StrengthenEffectTable"),
+            });
             return;
         }
 
@@ -222,6 +226,9 @@ public sealed partial class CharacterService
             Pos = (EquipGridType)grid,
             ItemGUID = item!.Guid,
             Item = ItemInfo(item),
+            // The client overwrites its resonance levels with these two on every equip/unequip reply (LC_DAL_Equipment._processEquipItemOpr),
+            // so leaving them out reset the refine resonance panel to level 0 until the next login or refine.
+            RefineEffectLv = Resonance(session, "RefiningEffectTable"), StrengthenEffectLv = Resonance(session, "StrengthenEffectTable"),
         });
         await EquipmentAppearanceChangedAsync(session);
         foreach (var handler in StateChanged) handler(session);

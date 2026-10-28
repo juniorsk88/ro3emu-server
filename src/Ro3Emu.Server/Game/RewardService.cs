@@ -45,6 +45,7 @@ public sealed class RewardService
         this._data = data;
         this._log = log;
         _attenuation = new DropAttenuation(data);
+        character.KillSharers = teams.KillSharers;
         combat.BeforeKilled.Add(PrepareKilledAsync);
         combat.Killed.Add(KilledAsync);
     }
@@ -55,6 +56,8 @@ public sealed class RewardService
         internal required List<(int Entry, int Count)> Items;
         internal long BaseExp;
         internal long JobExp;
+        /// <summary>Base EXP before the level-gap correction and the party bonus: what each sharing party member scales for their own level.</summary>
+        internal long RawExp;
         internal bool Published;
     }
     private readonly System.Runtime.CompilerServices.ConditionalWeakTable<MonsterUnit, KillOutcome> _outcomes = new();
@@ -95,8 +98,8 @@ public sealed class RewardService
             if (_outcomes.TryGetValue(monster, out var stale) && stale.Role.Id != role.Id) _outcomes.Remove(monster);
             if (!_outcomes.TryGetValue(monster, out var outcome))
             {
-                var (items, baseExp, jobExp) = ResolveKill(player, monster, bonus);
-                outcome = new KillOutcome { Role = role, Items = items, BaseExp = baseExp, JobExp = jobExp };
+                var (items, baseExp, jobExp) = ResolveKill(player, monster, bonus, out long rawExp);
+                outcome = new KillOutcome { Role = role, Items = items, BaseExp = baseExp, JobExp = jobExp, RawExp = rawExp };
                 _outcomes.Add(monster, outcome);
             }
             _character.StageKillTaskObligations?.Invoke(player, monster, settlement);
@@ -135,20 +138,27 @@ public sealed class RewardService
         }
     }
 
-    private (List<(int Entry, int Count)> Items, long BaseExp, long JobExp) ResolveKill(GameSession player, MonsterUnit monster, bool bonus)
+    private (List<(int Entry, int Count)> Items, long BaseExp, long JobExp) ResolveKill(GameSession player, MonsterUnit monster, bool bonus, out long rawExp)
     {
-        if (ResolveKillForTest != null) return ResolveKillForTest(player, monster);
+        rawExp = 0;
+        if (ResolveKillForTest != null)
+        {
+            var forced = ResolveKillForTest(player, monster);
+            rawExp = forced.BaseExp;
+            return forced;
+        }
         // Team-boss personal awards have their own durable dungeon obligation; ordinary loot stays empty.
         if (player.DungeonAttempt is { Plan.Multi: not null } dungeon && monster.InstanceId == dungeon.Room.Id)
             return ([], 0, 0);
         if (_data.Row("NPCConfig", monster.Template.NpcId) is not { } npc) return ([], 0, 0);
         var drops = new List<(int Entry, int Count)>();
+        var pools = new List<long>(); // every pool this kill rolled, for the panel's "Drop melhorado" (DropBoost)
         // (inferred) NPCDropConfig environment 0 is reduced and 1 is Bonus Time: the former carries
         // small EXP at player levels 1-99, the latter larger EXP. Fatigue environment 2 has no proven trigger.
         // _iNormalDrop remains additive under its own level/map conditions; no numeric multiplier is invented.
         if (Resolve(GameData.Int(npc, "_iDrop")) is var dropId and > 0 && _data.Row("NPCDropConfig", dropId) is { } nd
             && nd.ValueKind == JsonValueKind.Object && nd.TryGetProperty(bonus ? "1" : "0", out var env))
-            RollPools(env, player, drops, monster.Template.Level);
+            RollPools(env, player, drops, monster.Template.Level, pools);
         if (npc.TryGetProperty("_iNormalDrop", out var normals) && normals.ValueKind == JsonValueKind.Array)
         {
             foreach (var n in normals.EnumerateArray())
@@ -157,13 +167,21 @@ public sealed class RewardService
                 if (row.TryGetProperty("_iMapId", out var maps) && maps.ValueKind == JsonValueKind.Array && maps.GetArrayLength() > 0
                     && !maps.EnumerateArray().Any(m => GameData.Number(m) == player.SceneEntry))
                     continue;
-                RollPools(row, player, drops, monster.Template.Level);
+                RollPools(row, player, drops, monster.Template.Level, pools);
             }
         }
+        RollBoostedExtras(pools, player.Progress!, drops, monster.Template.Level);
 
         foreach (var extra in ExtraKillDrops) drops.AddRange(extra(player, monster));
+        var (mapExp, mapDrop) = MapRates.For(player.SceneEntry); // <data>/map-rates.json, x1 when absent
+        if (mapDrop != 1.0) drops = MapRates.ScaleItems(drops, mapDrop, e => e is BaseExpItem or JobExpItem, _random.NextDouble);
+        // A monster that killed players (MonsterAiSettings kill progression) gives more items and EXP, on its own scale.
+        if (monster.DropBonusPct > 0) drops = MapRates.ScaleItems(drops, 1 + monster.DropBonusPct / 100, e => e is BaseExpItem or JobExpItem, _random.NextDouble);
         long baseExp = drops.Where(d => d.Entry == BaseExpItem).Sum(d => (long)d.Count);
+        if (mapExp != 1.0) baseExp = (long)Math.Round(baseExp * mapExp);
+        if (monster.ExpBonusPct > 0) baseExp = (long)Math.Round(baseExp * (1 + monster.ExpBonusPct / 100));
         var items = drops.Where(d => d.Entry is not (BaseExpItem or JobExpItem) && _data.Row("ItemConfig", d.Entry) != null).ToList();
+        rawExp = baseExp;
         if (baseExp > 0)
         {
             long gap = player.Progress!.Level - monster.Template.Level;
@@ -201,6 +219,7 @@ public sealed class RewardService
                 await player.SendGameAsync(CharacterService.GetRewardNotify, notify);
             }
         }
+        await ShareExpAsync(player, monster, outcome.RawExp);
         var granted = outcome.Items.Select(i => (i.Entry, Count: (long)i.Count)).ToList();
         if (outcome.BaseExp > 0) granted.Add((BaseExpItem, outcome.BaseExp));
         if (outcome.JobExp > 0) granted.Add((JobExpItem, outcome.JobExp));
@@ -212,6 +231,35 @@ public sealed class RewardService
         _log.LogInformation("{Name} durable loot from {Npc}: exp {Exp}, source {Source}",
             role.Name, monster.Template.NpcId, outcome.BaseExp, monster.RewardSource!.Key);
     }
+    /// <summary>
+    /// Ro3Emu:PartyKillShare. The other party members near the killer get the kill's EXP as if each had killed it: the same raw EXP,
+    /// corrected for their own level against the monster's, times the party bonus; Job EXP equals Base EXP as for the killer. Items stay
+    /// with the killer. A member's failure never undoes the killer's reward.
+    /// </summary>
+    private async Task ShareExpAsync(GameSession killer, MonsterUnit monster, long rawExp)
+    {
+        if (rawExp <= 0) return;
+        var sharers = _teams.KillSharers(killer);
+        if (sharers.Count == 0) return;
+        int bonus = _teams.ExpBonus(killer);
+        foreach (var member in sharers)
+        {
+            var role = member.Role;
+            try
+            {
+                if (role == null || member.Progress == null) continue;
+                long gap = member.Progress.Level - monster.Template.Level;
+                long exp = Math.Max(1, rawExp * Correction((int)Math.Clamp(gap, -200, 200)) / 10000 * bonus / 10000);
+                await _character.AddExpAsync(member, exp, exp, () => ReferenceEquals(member.Role, role));
+                _log.LogInformation("{Name} shares {Killer}'s kill of {Npc}: exp {Exp}", role.Name, killer.Role?.Name, monster.Template.NpcId, exp);
+            }
+            catch (Exception e)
+            {
+                _log.LogWarning(e, "Shared kill EXP for {Name} from {Npc} failed", role?.Name, monster.Template.NpcId);
+            }
+        }
+    }
+
     /// <summary>MultiverseGroupConfig id → the playbook's value, else _iValue_default (playbook 0 here).</summary>
     private long Resolve(long multiverseId) =>
         multiverseId > 0 && _data.Row("MultiverseGroupConfig", multiverseId) is { } mg ? GameData.Int(mg, "_iValue_default") : 0;
@@ -221,16 +269,20 @@ public sealed class RewardService
     /// independently (MVP first-strike pool 21001 = [2020, 100%, 30, 1] = 30 x 1000 Minted Coin).
     /// </summary>
     /// <summary>A kill's pools: <paramref name="monsterLevel"/> is the slain monster's level (DropAttenuationConfig).</summary>
-    private void RollPools(JsonElement row, GameSession player, List<(int, int)> drops, int monsterLevel)
+    private void RollPools(JsonElement row, GameSession player, List<(int, int)> drops, int monsterLevel, List<long>? pools = null)
     {
         foreach (var p in row.EnumerateObject().Where(p => p.Name.StartsWith("_iDropPool", StringComparison.Ordinal)))
-            if (GameData.Number(p.Value) is { } poolId) RollPool((long)poolId, player.Progress!, drops, null, monsterLevel);
+            if (GameData.Number(p.Value) is { } poolId)
+            {
+                pools?.Add((long)poolId);
+                RollPool((long)poolId, player.Progress!, drops, null, monsterLevel);
+            }
     }
 
     private void RollPool(long poolId, GameSession player, List<(int, int)> drops, List<(int Entry, int Count, int Bind)>? bound = null)
         => RollPool(poolId, player.Progress!, drops, bound);
 
-    private void RollPool(long poolId, RoleProgress progress, List<(int, int)> drops, List<(int Entry, int Count, int Bind)>? bound = null,
+    internal void RollPool(long poolId, RoleProgress progress, List<(int, int)> drops, List<(int Entry, int Count, int Bind)>? bound = null,
         int monsterLevel = DropAttenuation.NoMonster)
     {
         if (_data.Row("DropPoolConfig", poolId) is not { } pool) return;
@@ -247,6 +299,105 @@ public sealed class RewardService
                 for (int i = 0; i < picks; i++) PickFromGroup(group, progress, drops, bound, monsterLevel);
             }
         }
+    }
+
+    /// <summary>The boosted extras of one set of pools for one killer, by pool list, level, class and settings.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(string Pools, int Level, int Career, DropBoost.Settings Settings), BoostItem[]> _boostCache = new();
+
+    /// <summary>One item with its extra roll; <paramref name="Rows"/> are the group rows that give it to this killer, weighted by how much each contributes.</summary>
+    private sealed record BoostItem(int Entry, double Extra, (JsonElement Row, double Weight)[] Rows);
+
+    /// <summary>
+    /// The panel's "Drop melhorado" (<see cref="DropBoost"/>), once per kill after the normal rolls of <paramref name="pools"/>: every item
+    /// the killer can get from them has a total chance <c>p</c> for the kill (what the normal rolls give it, all slots and pools together:
+    /// the group's weights restricted to the rows the killer's level and class may get, as <see cref="PickFromGroup"/> does). Below the
+    /// panel's threshold it gets one more independent roll that lifts that chance to <see cref="DropBoost.Settings.Target"/>; from the
+    /// threshold up, or with the switch off, nothing is rolled. The boost is worked out on the item's <b>original</b> chance (the slots' table
+    /// chances with the panel's rate and ceiling undone, <see cref="DropBoost.Settings.Original"/>) and the rate is applied on top.
+    /// </summary>
+    internal void RollBoostedExtras(IReadOnlyList<long> pools, RoleProgress p, List<(int, int)> drops, int monsterLevel, DropBoost.Settings? settings = null)
+    {
+        var s = settings ?? DropBoost.Current();
+        if (!s.Active || pools.Count == 0) return;
+        var key = (string.Join(',', pools), p.Level, p.Career, s);
+        if (!_boostCache.TryGetValue(key, out var items))
+        {
+            items = BoostItems(pools, p, s);
+            if (_boostCache.Count > 20_000) _boostCache.Clear();
+            _boostCache[key] = items;
+        }
+        foreach (var item in items)
+        {
+            if (_random.NextDouble() >= item.Extra) continue;
+            // the row that gives the item, by contribution, as the normal pick would (its quantity)
+            double pick = _random.NextDouble() * item.Rows.Sum(x => x.Weight);
+            var r = item.Rows[^1].Row;
+            foreach (var (row, weight) in item.Rows)
+            {
+                pick -= weight;
+                if (pick >= 0) continue;
+                r = row;
+                break;
+            }
+            long min = GameData.Int(r, "_iMinNumber");
+            int count = _random.Next((int)min, (int)Math.Max(min, GameData.Int(r, "_iMaxNumber")) + 1);
+            int amount = _attenuation.Apply(r, Math.Max(1, count), p.Level, monsterLevel, _random);
+            if (amount > 0) drops.Add((item.Entry, amount));
+        }
+    }
+
+    private BoostItem[] BoostItems(IReadOnlyList<long> pools, RoleProgress p, DropBoost.Settings s)
+    {
+        var miss = new Dictionary<int, double>();                       // item -> chance it is NOT given by any slot (table chances)
+        var missOriginal = new Dictionary<int, double>();               // the same on the original chances (rate and ceiling undone)
+        var rows = new Dictionary<int, List<(JsonElement, double)>>();
+        foreach (long poolId in pools)
+        {
+            if (_data.Row("DropPoolConfig", poolId) is not { } pool) continue;
+            for (int slot = 1; slot <= 16; slot++)
+            {
+                if (!pool.TryGetProperty($"_iDropGroup_{slot}", out var g) || g.ValueKind != JsonValueKind.Array || g.GetArrayLength() < 2) continue;
+                long group = (long)(GameData.Number(g[0]) ?? 0);
+                double chance = (GameData.Number(g[1]) ?? 0) / 1_000_000;
+                int rolls = g.GetArrayLength() >= 3 ? Math.Clamp((int)(GameData.Number(g[2]) ?? 1), 1, 1000) : 1;
+                int picks = g.GetArrayLength() >= 4 ? Math.Max(1, (int)(GameData.Number(g[3]) ?? 1)) : 1;
+                if (_data.Row("DropGroupConfig", group) is not { ValueKind: JsonValueKind.Array } groupRows) continue;
+                var candidates = groupRows.EnumerateArray().Where(r => Eligible(r, p)).ToList();
+                long total = candidates.Sum(r => GameData.Int(r, "_iWeights"));
+                if (total <= 0) continue;
+                // one entry per item: its rows' weights add up (a class row and a generic row both give it), as in the normal roll
+                foreach (var item in candidates.GroupBy(r => (int)GameData.Int(r, "_kDropItem")))
+                {
+                    if (item.Key is BaseExpItem or JobExpItem or 1) continue; // EXP and Zeny are not item drops
+                    double share = item.Sum(r => GameData.Int(r, "_iWeights")) / (double)total;
+                    double slotChance = DropBoost.SlotChance(chance, rolls, picks, share);
+                    if (slotChance <= 0) continue;
+                    miss[item.Key] = miss.GetValueOrDefault(item.Key, 1.0) * (1 - slotChance);
+                    missOriginal[item.Key] = missOriginal.GetValueOrDefault(item.Key, 1.0) * (1 - DropBoost.SlotChance(s.Original(chance), rolls, picks, share));
+                    if (!rows.TryGetValue(item.Key, out var list)) rows[item.Key] = list = [];
+                    foreach (var r in item) list.Add((r, GameData.Int(r, "_iWeights") / (double)total * slotChance));
+                }
+            }
+        }
+        var result = new List<BoostItem>();
+        foreach (var (entry, notGiven) in miss)
+        {
+            double normal = 1 - notGiven;                                  // what the normal rolls give
+            double original = 1 - missOriginal[entry];                     // the item's chance in the original data
+            double extra = DropBoost.ExtraRoll(normal, s.Target(original));
+            if (extra > 0) result.Add(new BoostItem(entry, extra, rows[entry].ToArray()));
+        }
+        return result.ToArray();
+    }
+
+    /// <summary>A group row the killer may get: positive weight, no quest or activity condition, inside its level range and class list.</summary>
+    private static bool Eligible(JsonElement r, RoleProgress p)
+    {
+        if (GameData.Int(r, "_iWeights") <= 0 || GameData.Int(r, "_iQuestLimit") != 0 || GameData.Int(r, "_iActivityid") != 0) return false;
+        long min = GameData.Int(r, "_iMinLevelLimit"), max = GameData.Int(r, "_iMaxLevelLimit");
+        if (p.Level < min || max > 0 && p.Level > max) return false;
+        return !r.TryGetProperty("_iJobLimit", out var jobs) || jobs.ValueKind != JsonValueKind.Array || jobs.GetArrayLength() == 0
+               || jobs.EnumerateArray().Any(j => GameData.Number(j) == p.Career);
     }
 
     /// <summary>
@@ -326,14 +477,7 @@ public sealed class RewardService
     {
         if (_data.Row("DropGroupConfig", group) is not { ValueKind: JsonValueKind.Array } rows) return;
         var p = progress;
-        var candidates = rows.EnumerateArray().Where(r =>
-        {
-            if (GameData.Int(r, "_iWeights") <= 0 || GameData.Int(r, "_iQuestLimit") != 0 || GameData.Int(r, "_iActivityid") != 0) return false;
-            long min = GameData.Int(r, "_iMinLevelLimit"), max = GameData.Int(r, "_iMaxLevelLimit");
-            if (p.Level < min || max > 0 && p.Level > max) return false;
-            return !r.TryGetProperty("_iJobLimit", out var jobs) || jobs.ValueKind != JsonValueKind.Array || jobs.GetArrayLength() == 0
-                   || jobs.EnumerateArray().Any(j => GameData.Number(j) == p.Career);
-        }).ToList();
+        var candidates = rows.EnumerateArray().Where(r => Eligible(r, p)).ToList();
         long total = candidates.Sum(r => GameData.Int(r, "_iWeights"));
         if (total <= 0) return;
         long roll = (long)(_random.NextDouble() * total);

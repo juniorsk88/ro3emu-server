@@ -10,6 +10,7 @@ using Ro3Emu.Server.Maps;
 namespace Ro3Emu.Tests;
 
 /// <summary>Real game-wire casts with deterministic owned-world fixtures and negative lifecycle checks.</summary>
+[Collection("MonsterAi")]
 public sealed partial class SkillCombatTests : IAsyncLifetime
 {
     private readonly string _dataDir = Path.Combine(Path.GetTempPath(), "ro3emu-skillcombat-" + Guid.NewGuid().ToString("N"));
@@ -254,6 +255,284 @@ public sealed partial class SkillCombatTests : IAsyncLifetime
         await Loop.InvokeAsync(() => { Assert.Equal(hp, target.Hp); Assert.Null(Session("alice").SkillCast); return Task.CompletedTask; });
     }
 
+    /// <summary>
+    /// Ro3Emu:SkillNoCancel: another skill neither replaces the cast in progress (even a _bCancelCast 1 skill) nor interrupts it
+    /// through the client's "interrupt and cast next" request; the first cast lands its hit.
+    /// </summary>
+    [ClientDataFact]
+    public async Task ASkillInProgressIsNotCancelledByAnotherSkill()
+    {
+        await using var alice = await InWorld("Alice");
+        await Gm("alice", "!job 2100"); await Teach("alice", 12004); await Teach("alice", 12103);
+        var target = await Target("alice", stationary: true);
+        await Loop.InvokeAsync(() => { target.Hp = 100000; return Task.CompletedTask; });
+        long hp = target.Hp;
+        await alice.SendGameAsync(CombatService.UseSkill, new CastSkillReq { SkillId = 1200401, TargetId = target.Uid });
+        var first = await Next(alice, CombatService.UseSkill, CastSkillRsp.Parser);
+        Assert.Equal(0, first.Result);
+        await alice.SendGameAsync(CombatService.UseSkill, new CastSkillReq { SkillId = 1210301, TargetId = target.Uid });
+        Assert.Equal(ErrorCodes.SkillBusy, (await Next(alice, CombatService.UseSkill, CastSkillRsp.Parser)).Result);
+        await alice.SendGameAsync(CombatService.SkillInterrupt, new SkillInterruptReq
+        { InterruptSkillId = 1200401, NxtSkill = new CastSkillReq { SkillId = 1210301, TargetId = target.Uid } });
+        Assert.False((await Next(alice, CombatService.SkillInterrupt, SkillInterruptResp.Parser)).IsInterruptSucc);
+        var hit = await Next(alice, CombatService.SkillHit, SkillHitInfo.Parser, h => h.SessionId == first.SessionId);
+        Assert.True(Assert.Single(hit.Dsts).Damage > 0);
+        await Loop.InvokeAsync(() => { Assert.True(target.Hp < hp); return Task.CompletedTask; });
+    }
+
+    /// <summary>
+    /// Holding the key of a chanted skill (Fire Bolt: 1.0 s chant, 0.5 s cooldown, _bCancelCast 1) asks for the same
+    /// skill again 0.5 s into its chant. That repeat must not cancel the cast in progress: if it did, every cast
+    /// would be cancelled before its hit and nothing would ever land.
+    /// </summary>
+    [ClientDataFact]
+    public async Task RepeatingTheSameChantedSkillDoesNotCancelTheCastInProgress()
+    {
+        await using var alice = await InWorld("Alice");
+        await Gm("alice", "!job 2100"); await Teach("alice", 12004);
+        var target = await Target("alice", stationary: true);
+        await Loop.InvokeAsync(() => { target.Hp = 100000; return Task.CompletedTask; });
+        long hp = target.Hp;
+        await alice.SendGameAsync(CombatService.UseSkill, new CastSkillReq { SkillId = 1200401, TargetId = target.Uid, IsAutoCast = true });
+        var first = await Next(alice, CombatService.UseSkill, CastSkillRsp.Parser);
+        Assert.Equal(0, first.Result);
+        await Task.Delay(650);
+        await alice.SendGameAsync(CombatService.UseSkill, new CastSkillReq { SkillId = 1200401, TargetId = target.Uid, IsAutoCast = true });
+        var hit = await Next(alice, CombatService.SkillHit, SkillHitInfo.Parser, h => h.SessionId == first.SessionId);
+        Assert.True(Assert.Single(hit.Dsts).Damage > 0);
+        await Loop.InvokeAsync(() => { Assert.True(target.Hp < hp); return Task.CompletedTask; });
+    }
+
+    /// <summary>
+    /// The key held down for seconds (the client repeats the request every ~120 ms): every cast the server accepted must
+    /// land its hit. A repeat arriving after a cast's impact but before its projectile lands used to cancel that cast,
+    /// so the chant bar kept filling and nothing was ever damaged.
+    /// </summary>
+    [ClientDataFact]
+    public async Task HoldingAChantedSkillLandsEveryAcceptedCast()
+    {
+        await using var alice = await InWorld("Alice");
+        await Gm("alice", "!job 2100"); await Teach("alice", 12004);
+        var target = await Target("alice", stationary: true);
+        await Loop.InvokeAsync(() => { target.Hp = 10_000_000; target.Template = target.Template with { MaxHp = 10_000_000 }; return Task.CompletedTask; });
+        var until = DateTime.UtcNow.AddSeconds(7);
+        while (DateTime.UtcNow < until)
+        {
+            await alice.SendGameAsync(CombatService.UseSkill, new CastSkillReq { SkillId = 1200401, TargetId = target.Uid, IsAutoCast = true });
+            await Task.Delay(120);
+        }
+        await Task.Delay(2500);
+        var events = alice.Inbox.Snapshot();
+        var accepted = events.Where(e => e.IsGame(CombatService.UseSkill)).Select(e => CastSkillRsp.Parser.ParseFrom(e.Body))
+            .Where(r => r.Result == 0).Select(r => r.SessionId).Distinct().ToList();
+        var landed = events.Where(e => e.IsGame(CombatService.SkillHit)).Select(e => SkillHitInfo.Parser.ParseFrom(e.Body))
+            .Where(h => h.Dsts.Any(d => d.Damage > 0)).Select(h => h.SessionId).ToHashSet();
+        Assert.True(accepted.Count >= 3, $"accepted {accepted.Count}");
+        Assert.Equal(accepted.Count, accepted.Count(landed.Contains));
+    }
+
+    /// <summary>
+    /// A pulled field monster is not tied to its spawn point: it keeps chasing while the player is near it, and when it
+    /// does give up (the player is beyond its leash range from the monster) it stays where it is, with its HP, instead
+    /// of walking home and healing (which would undo pulling a pack for somebody else to kill).
+    /// </summary>
+    [ClientDataFact]
+    public async Task FieldMonsterKeepsChasingFarFromHomeAndStaysWhereItGaveUp()
+    {
+        await using var alice = await InWorld("Alice");
+        var m = await Target("alice");
+        var monsters = _app.Services.GetRequiredService<MonsterService>();
+        var scenes = _app.Services.GetRequiredService<SceneService>();
+        await Loop.InvokeAsync(async () =>
+        {
+            var s = Session("alice");
+            var map = _app.Services.GetRequiredService<World>().Map(s.WorldScene);
+            m.NextRoamMs = long.MaxValue; m.NextSwingMs = long.MaxValue;
+            m.Hp = m.Template.MaxHp / 2;
+            long hurt = m.Hp;
+            float leash = m.Template.LeashDistance;
+            // The chase took it far beyond the leash range of its spawn point, and the player is right beside it.
+            m.X = m.Home.X + leash * 2; m.Moving = false; map.Moved(m);
+            await scenes.TeleportInMapAsync(s, new MapPoint(m.X, m.Y, m.Z, 0));
+            monsters.Engage(m, s);
+            monsters.Tick(m, map);
+            Assert.Same(s, m.Target);                                      // still chasing: only the distance to the player counts
+            Assert.False(m.Returning);
+
+            // The player gets away: out of the monster's leash range, the monster gives up where it stands.
+            float x = m.X, z = m.Z;
+            await scenes.TeleportInMapAsync(s, new MapPoint(m.X + leash + 5, m.Y, m.Z, 0));
+            monsters.Tick(m, map);
+            Assert.Null(m.Target);
+            Assert.False(m.Returning);                                     // it does not walk home
+            Assert.Equal(hurt, m.Hp);                                      // and it does not heal
+            Assert.Equal((x, z), (m.X, m.Z));
+            Assert.Equal((x, z), m.RoamAnchor);                            // it roams around where it is now
+            for (int i = 0; i < 5; i++) monsters.Tick(m, map);
+            Assert.Equal(hurt, m.Hp);
+        });
+    }
+
+    /// <summary>The time-based give-up (AIConfig _iUnFightType 2): a monster that has not been hit nor hit anything for the
+    /// configured time lets go of its target, so one stuck behind an obstacle does not hold it for ever; 0 turns it off.</summary>
+    [ClientDataFact]
+    public async Task FieldMonsterGivesUpAfterTheConfiguredTimeWithoutCombat()
+    {
+        await using var alice = await InWorld("Alice");
+        var m = await Target("alice");
+        var monsters = _app.Services.GetRequiredService<MonsterService>();
+        try
+        {
+            await Loop.InvokeAsync(() =>
+            {
+                var s = Session("alice");
+                var map = _app.Services.GetRequiredService<World>().Map(s.WorldScene);
+                m.NextRoamMs = long.MaxValue; m.NextSwingMs = long.MaxValue;
+                monsters.Engage(m, s);
+                monsters.Tick(m, map);
+                Assert.Same(s, m.Target);
+                m.ChaseActiveMs = MonsterService.NowMs - 29_000;                // 29 s: still chasing (default 30 s)
+                monsters.Tick(m, map);
+                Assert.Same(s, m.Target);
+                m.ChaseActiveMs = MonsterService.NowMs - 31_000;                // 31 s without a hit either way: it lets go
+                monsters.Tick(m, map);
+                Assert.Null(m.Target);
+                Assert.False(m.Returning);
+
+                MonsterAiSettings.PinForTest(new MonsterAiProfiles(MonsterAiSettings.FieldDefault with { GiveUpSeconds = 0 }, MonsterAiSettings.BossDefault));
+                monsters.Engage(m, s);
+                m.ChaseActiveMs = MonsterService.NowMs - 3_600_000;             // off: never
+                monsters.Tick(m, map);
+                Assert.Same(s, m.Target);
+                return Task.CompletedTask;
+            });
+        }
+        finally { MonsterAiSettings.PinForTest(null); }
+    }
+
+    /// <summary>
+    /// Killing a player makes the monster level up, recover HP and grow by the scale (kills x step up to the cap, with the EXP and
+    /// item bonus on the same scale), and it then stays where it is instead of walking home and healing.
+    /// </summary>
+    [ClientDataFact]
+    public async Task AMonsterThatKillsPlayersGrowsOnTheScaleUpToTheCap()
+    {
+        await using var alice = await InWorld("Alice");
+        var m = await Target("alice");
+        var monsters = _app.Services.GetRequiredService<MonsterService>();
+        try
+        {
+            // Return home and full heal are on for this profile: a monster that just killed must still do neither.
+            MonsterAiSettings.PinForTest(new MonsterAiProfiles(MonsterAiSettings.FieldDefault with { ReturnHome = true, HealOnReset = true }, MonsterAiSettings.BossDefault));
+            var b = await Loop.InvokeAsync(() => Task.FromResult(m.Template));
+            await Loop.InvokeAsync(async () => { m.Hp = 1; await Task.CompletedTask; });
+            for (int kill = 1; kill <= 12; kill++)
+            {
+                await Loop.InvokeAsync(async () =>
+                {
+                    long before = m.Hp;
+                    await monsters.OnKilledPlayerAsync(m);
+                    double pct = Math.Min(500, kill * 50);
+                    Assert.Equal(kill, m.PlayerKills);
+                    Assert.Equal(pct, m.GrowthPct);
+                    Assert.Equal(b.Level + Math.Min(kill, 10), m.Template.Level);                         // one level per kill until the cap
+                    Assert.Equal((long)Math.Round(b.MaxHp * (1 + pct / 100)), m.Template.MaxHp);
+                    Assert.Equal((long)Math.Round(b.Atk * (1 + pct / 100)), m.Template.Atk);
+                    Assert.Equal(pct, m.ExpBonusPct); Assert.Equal(pct, m.DropBonusPct);                  // 500 at the cap, on the same scale
+                    Assert.Equal(Math.Min(m.Template.MaxHp, before + (long)Math.Round(m.Template.MaxHp * 0.2)), m.Hp);   // 20 % of its HP per kill
+                });
+            }
+            await Loop.InvokeAsync(() =>
+            {
+                var s = Session("alice");
+                var map = _app.Services.GetRequiredService<World>().Map(s.WorldScene);
+                m.NextRoamMs = long.MaxValue; m.NextSwingMs = long.MaxValue;
+                m.Hp = m.Template.MaxHp / 2; long hp = m.Hp;
+                monsters.Engage(m, s);
+                s.Dead = true;                                            // its target died
+                monsters.Tick(m, map);
+                Assert.Null(m.Target);
+                Assert.False(m.Returning);                                // it stays where it is
+                Assert.Equal(hp, m.Hp);                                   // and does not heal fully
+                s.Dead = false;
+                return Task.CompletedTask;
+            });
+            // Off: nothing changes.
+            MonsterAiSettings.PinForTest(new MonsterAiProfiles(MonsterAiSettings.FieldDefault with { KillGrowth = false }, MonsterAiSettings.BossDefault));
+            var other = await Target("alice");
+            await Loop.InvokeAsync(async () => { await monsters.OnKilledPlayerAsync(other); Assert.Equal(0, other.PlayerKills); Assert.Equal(0, other.GrowthPct); });
+        }
+        finally { MonsterAiSettings.PinForTest(null); }
+    }
+
+    /// <summary>The same progression through the real swing: the monster's own attack kills the player (not a direct call).</summary>
+    [ClientDataFact]
+    public async Task AMonsterThatKillsAPlayerWithItsOwnAttackLevelsUpAndHeals()
+    {
+        await using var alice = await InWorld("Alice");
+        var m = await Target("alice");
+        var monsters = _app.Services.GetRequiredService<MonsterService>();
+        var (level, hurt) = await Loop.InvokeAsync(() =>
+        {
+            var s = Session("alice");
+            m.Hp = m.Template.MaxHp / 2;
+            s.CurrentHp = 1;
+            monsters.Engage(m, s);
+            return Task.FromResult((m.Template.Level, m.Hp));
+        });
+        for (int i = 0; i < 100 && !await Loop.InvokeAsync(() => Task.FromResult(Session("alice").Dead)); i++) await Task.Delay(100);
+        await Task.Delay(800);
+        await Loop.InvokeAsync(() =>
+        {
+            Assert.True(Session("alice").Dead);
+            Assert.Equal(1, m.PlayerKills);
+            Assert.Equal(50, m.GrowthPct);
+            Assert.Equal(level + 1, m.Template.Level);
+            Assert.True(m.Hp > hurt, $"hp {m.Hp} was {hurt}");
+            return Task.CompletedTask;
+        });
+        // and the dead player's client is told: new level, new max HP, the recovered HP, and the effect
+        var seen = alice.Inbox.Snapshot().Where(e => e.IsGame(CombatService.AoiAttrChange)).Select(e => AOIAttrChange.Parser.ParseFrom(e.Body))
+            .Where(c => c.EntityUuid == (ulong)m.Uid).SelectMany(c => c.Property).ToList();
+        Assert.Contains(seen, p => p.Idx == 2002 && p.Data == level + 1);
+        Assert.Contains(seen, p => p.Idx == 101);
+        Assert.Contains(alice.Inbox.Snapshot(), e => e.IsGame(CombatService.SkillEffect) && SkillEffectDisplayNotify.Parser.ParseFrom(e.Body).SourceId == m.Uid);
+        // a client that never said it has the level-up sprite (the original data) still gets only effects that exist in it
+        var effects = EvolutionEffects(alice, m);
+        Assert.DoesNotContain(MonsterService.LevelUpFxId, effects);
+        Assert.NotEmpty(effects);
+    }
+
+    private static List<int> EvolutionEffects(Ro3Emu.Bot.BotClient bot, MonsterUnit m) => bot.Inbox.Snapshot()
+        .Where(e => e.IsGame(CombatService.SkillEffect)).Select(e => SkillEffectDisplayNotify.Parser.ParseFrom(e.Body))
+        .Where(x => x.SourceId == m.Uid).Select(x => (int)x.EffectId).ToList();
+
+    /// <summary>
+    /// A client with Ro3Emu.ClientHooks.LevelUpEffect says so (77017); the monster's evolution then plays the character's own
+    /// level-up sprite for it (the row of our own id) instead of the stand-in effects, and nobody else's view changes.
+    /// </summary>
+    [ClientDataFact]
+    public async Task AnEvolvingMonsterPlaysTheLevelUpSpriteForClientsThatHaveIt()
+    {
+        await using var alice = await InWorld("Alice");
+        await alice.SendGameBytesAsync(MonsterService.LevelUpFxHello, "fx"u8.ToArray());
+        for (int i = 0; i < 50 && !await Loop.InvokeAsync(() => Task.FromResult(Session("alice").LevelUpFx)); i++) await Task.Delay(100);
+        Assert.True(await Loop.InvokeAsync(() => Task.FromResult(Session("alice").LevelUpFx)), "the hello was not recorded");
+        var m = await Target("alice");
+        var monsters = _app.Services.GetRequiredService<MonsterService>();
+        await Loop.InvokeAsync(() =>
+        {
+            var s = Session("alice");
+            s.CurrentHp = 1;
+            monsters.Engage(m, s);
+            return Task.CompletedTask;
+        });
+        for (int i = 0; i < 100 && !await Loop.InvokeAsync(() => Task.FromResult(Session("alice").Dead)); i++) await Task.Delay(100);
+        await Task.Delay(800);
+        Assert.Equal(1, await Loop.InvokeAsync(() => Task.FromResult(m.PlayerKills)));
+        Assert.Equal([MonsterService.LevelUpFxId], EvolutionEffects(alice, m));
+    }
+
     [ClientDataFact]
     public async Task GroundNpcUsesRequestedPositionAndDespawnsOnTeardown()
     {
@@ -268,6 +547,48 @@ public sealed partial class SkillCombatTests : IAsyncLifetime
         await Loop.InvokeAsync(() => _app.Services.GetRequiredService<CombatService>().ClearSkillsAsync(Session("alice")));
         await Next(bob, GameAoiSink.SyncAoiView, AoIViewChangeData.Parser, x => x.LeaveAoi.Contains(field.Uuid));
         Assert.Empty(Session("alice").SkillObjects);
+    }
+
+    /// <summary>
+    /// Magnus Exorcismus (14109) is the Exorciser's cross on the floor: its script was not a ground family, so no NPC 22000009
+    /// spawned and the player saw no cross. It now spawns for 4 s (_kLogicData[1]) and hits every 0.5 s (_kDescData[4]).
+    /// </summary>
+    [ClientDataFact]
+    public async Task MagnusExorcismusLeavesItsCrossOnTheFloorForFourSeconds()
+    {
+        await using var alice = await InWorld("Alice"); await using var bob = await InWorld("Bob");
+        await Gm("alice", "!job 4200"); await Teach("alice", 14109);
+        var point = Session("alice").Position.Clone();
+        await alice.SendGameAsync(CombatService.UseSkill, new CastSkillReq { SkillId = 1410901, TargetPos = point });
+        Assert.Equal(0, (await Next(alice, CombatService.UseSkill, CastSkillRsp.Parser)).Result);
+        var spawn = await Next(bob, GameAoiSink.SyncAoiView, AoIViewChangeData.Parser, x => x.Bases.Any(b => b.EntityTemplateID == 22000009));
+        var cross = Assert.Single(spawn.Bases, b => b.EntityTemplateID == 22000009);
+        Assert.Equal((long)alice.Self!.Uuid, cross.Owner); Assert.Equal(point, cross.MovementInfo.Pos);
+        var unit = Assert.Single(Session("alice").SkillObjects);
+        Assert.Equal(500, unit.IntervalMs);
+        Assert.InRange(unit.ExpiresMs - unit.NextTickMs, 3000, 4500);
+        await Next(bob, GameAoiSink.SyncAoiView, AoIViewChangeData.Parser, x => x.LeaveAoi.Contains(cross.Uuid));
+        Assert.Empty(Session("alice").SkillObjects);
+    }
+
+    /// <summary>
+    /// The cross hits every 0.5 s for 4 s whatever the skill level (_kDescData[3] and [4] are the same on all 10 levels; the level
+    /// only changes the damage), so one cast lands about 8 hits on a monster that stays inside it.
+    /// </summary>
+    [ClientDataFact]
+    public async Task MagnusExorcismusHitsEveryHalfSecondForFourSeconds()
+    {
+        await using var alice = await InWorld("Alice");
+        await Gm("alice", "!job 4200"); await Teach("alice", 14109);
+        var target = await Target("alice", stationary: true);
+        await Loop.InvokeAsync(() => { target.Hp = 10_000_000; return Task.CompletedTask; });
+        await alice.SendGameAsync(CombatService.UseSkill, new CastSkillReq { SkillId = 1410901, TargetPos = Session("alice").Position.Clone() });
+        var accepted = await Next(alice, CombatService.UseSkill, CastSkillRsp.Parser);
+        Assert.Equal(0, accepted.Result);
+        await Task.Delay(5500);
+        int hits = alice.Inbox.Snapshot().Where(e => e.IsGame(CombatService.SkillHit))
+            .Select(e => SkillHitInfo.Parser.ParseFrom(e.Body)).Count(h => h.SessionId == accepted.SessionId && h.Dsts.Any(d => d.DstID == target.Uid));
+        Assert.InRange(hits, 7, 9);
     }
 
     [ClientDataFact]
@@ -286,6 +607,38 @@ public sealed partial class SkillCombatTests : IAsyncLifetime
         await alice.SendGameAsync(CombatService.UseSkill, new CastSkillReq { SkillId = 1400101 });
         Assert.Equal(ErrorCodes.SkillCostShort, (await Next(alice, CombatService.UseSkill, CastSkillRsp.Parser)).Result);
         Assert.False(Session("alice").SkillCds.ContainsKey(14001));
+    }
+
+    /// <summary>
+    /// Blessing and Increase AGI deal no damage, so their glow (the type-3 hit effect: fx_buff_angelblessing,
+    /// fx_buff_increaseagi) reaches the client only through a SkillHit naming the buffed player. DamageShare with a
+    /// Normal result draws the effect and no number.
+    /// </summary>
+    [ClientDataFact]
+    public async Task BuffSkillsDrawTheirOwnGlowOnTheBuffedAlly()
+    {
+        await using var alice = await InWorld("Alice"); await using var bob = await InWorld("Bob");
+        await Gm("alice", "!job 4100"); await Teach("alice", 14001); await Teach("alice", 14010);
+        foreach (var (skill, show) in new[] { (1400101, 1400102), (1401001, 1401004) })
+        {
+            await alice.SendGameAsync(CombatService.UseSkill, new CastSkillReq { SkillId = skill, TargetId = (long)bob.Self!.Uuid });
+            var accepted = await Next(alice, CombatService.UseSkill, CastSkillRsp.Parser);
+            Assert.Equal(0, accepted.Result);
+            foreach (var viewer in new[] { alice, bob })
+            {
+                var hit = await Next(viewer, CombatService.SkillHit, SkillHitInfo.Parser, x => x.SessionId == accepted.SessionId);
+                Assert.Equal(show, hit.ShowPoint);
+                // The buff lands on every ally in range, the caster included.
+                Assert.Contains(hit.Dsts, d => d.DstID == (long)bob.Self.Uuid);
+                Assert.All(hit.Dsts, d =>
+                {
+                    Assert.Equal(DamageType.DamageShare, d.DamageType);
+                    Assert.Equal(DamageHitResult.Normal, d.HitResult);
+                    Assert.Equal(0, d.Damage);
+                });
+            }
+            await Task.Delay(700);
+        }
     }
 
     [ClientDataFact]

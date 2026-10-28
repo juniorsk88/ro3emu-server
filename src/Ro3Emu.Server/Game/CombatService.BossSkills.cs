@@ -62,7 +62,7 @@ public sealed partial class CombatService
         }, highLevel: skill.HighLevel);
         if (!skill.Once && skill.CdMs > 0) await BossCooldownStartedAsync(boss, skill.Id, now + skill.CdMs);
         await FightingAsync(boss);
-        int show = HitEffect(GameData.Int(skill.Row, "_iScriptShow"));
+        int show = HitEffect(skill.Row);
         for (int i = 0; i < skill.HitMs.Length; i++)
         {
             bool first = i == 0;
