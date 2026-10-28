@@ -270,6 +270,9 @@ public sealed partial class ChatService
         }
     }
 
+    /// <summary>A text message the sender was allowed to send (quest target 103020).</summary>
+    public List<Func<GameSession, Task>> TextSent { get; } = [];
+
     private async Task SendTextAsync(GameSession sender, SendTextChatMessageRequest req)
     {
         if (!GuildAllowed(sender, req.ReceiveId))
@@ -277,6 +280,7 @@ public sealed partial class ChatService
             await DownAsync(sender, Cmd.SendText, new SendTextChatMessageResponse { ChatResult = false });
             return;
         }
+        foreach (var handler in TextSent) await handler(sender);
         var message = new TextChatMessage
         {
             MessageId = Interlocked.Increment(ref _nextMessageId).ToString(),

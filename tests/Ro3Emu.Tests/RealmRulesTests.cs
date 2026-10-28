@@ -129,7 +129,7 @@ public sealed class RealmRulesTests : IAsyncLifetime
     {
         var tasks = Service<TaskService>();
         // 107005 / 106012 kills with a party, 101021 the ridden mount, 210004 a dungeon boss, 106609 territory points.
-        foreach (long id in new long[] { 1904000, 1901000, 302091, 9000001, 120006 })
+        foreach (long id in new long[] { 1904000, 1901000, 302091, 9000001, 120006, 100023, 100006 })
             Assert.True(tasks.TargetsSupported(id), $"quest {id} has no reader");
     }
 

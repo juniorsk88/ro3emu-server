@@ -65,7 +65,11 @@ public sealed partial class AuctionService
         var requestLease = s.Attachment;
         var result = await BidCoreAsync(s, req.AuctionId, req.Price, req.OpType, req.GuildId, req.CheckOnly, req.ExtraPrice);
         await SendSessionAuctionAsync(s, requestRole, requestLease, Bid, result);
+        if (result.Result == 0 && !req.CheckOnly) foreach (var handler in BidPlaced) await handler(s);
     }
+
+    /// <summary>A bid the auction accepted (quest target 103003).</summary>
+    public List<Func<GameSession, Task>> BidPlaced { get; } = [];
 
     private async Task<BiddingAuctionRes> BidCoreAsync(GameSession s, long id, int price, BiddingType op, long guildId,
         bool checkOnly, int extra)

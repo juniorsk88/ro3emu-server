@@ -163,6 +163,14 @@ public sealed partial class TaskService
     // (the Temple of Melody story steps, CheckDungeonKillBossId): that boss killed inside a dungeon instance, by the killer or a role sharing the kill.
     private const int TTerritoryPoints = 106609, TDungeonBoss = 210004;
 
+    // 103020 CheckChatNum [n, channel] and 103003 CheckAuctionJoinCnt [n] (the one-line starter quests 100023 and 100006): each text message sent and
+    // each accepted bid counts once since acceptance (inferred: the channel is not filtered).
+    private const int TChatCount = 103020, TAuctionJoins = 103003;
+
+    internal Task OnChatSentAsync(GameSession s) => ProgressAsync(s, TChatCount, t => 1);
+
+    internal Task OnBidPlacedAsync(GameSession s) => ProgressAsync(s, TAuctionJoins, t => 1);
+
     /// <summary>A mount change re-reads the riding objectives.</summary>
     internal Task OnMountChangedAsync(GameSession s)
     {
@@ -191,6 +199,8 @@ public sealed partial class TaskService
             or [TJoinGuild, 1] or [TNowMount, _, _] => 1,
         [TKillParty or TKillMvpParty, var n, _] => n,
         [TTerritoryPoints, var n] => n,
+        [TChatCount, var n, _] => n,
+        [TAuctionJoins, var n] => n,
         [TDungeonBoss, _, var n] => n,
         [TPlot or TBaseLevel or TSkillPoints or TStatPoints or TResonance or TTotalRefine or TRefineSlots
             or TRefineCount or TMvp or TMvpOnce or TCargo or TAfkSeconds or TTimedBattle or TCaravan
