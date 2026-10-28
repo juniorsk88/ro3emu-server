@@ -92,8 +92,6 @@ public sealed partial class DungeonService
         this._world = world;
         gm.Register("actors", "[npcId | walk <x> <z> | use] (scripted scene test aid: the step's scene actors, jump beside one, arrive at x z as a walk would, or complete the step server-side)", ActorsGmAsync);
         teams.MultiDungeonInfo = TeamDungeonInfo;
-        combat.DamageAdjusters.Add((s, m, _, _, damage) => BondDamage(s, m, damage, incoming: false));
-        combat.IncomingDamageAdjusters.Add((m, s, _, damage) => Task.FromResult(BondDamage(s, m, damage, incoming: true)));
         scene.Loaded.Add(LoadedAsync);
         scene.Leaving.Add(AbandonAsync);
         combat.Killed.Add(KilledAsync);

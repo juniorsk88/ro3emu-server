@@ -534,7 +534,7 @@ public sealed class GuardianPetTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task OnlyAGuardiansControlBuffStopsAMonster(bool guardian)
+    public async Task AHostileControlBuffStopsAMonsterWhoeverAppliesIt(bool guardian)
     {
         await using var f = new Fixture();
         await f.Start();
@@ -546,8 +546,8 @@ public sealed class GuardianPetTests
             if (guardian) await buffs.AddGuardianAsync(monster, Petrify, 5000, f.Session.Role!.Id);
             else await buffs.AddSupportAsync(monster, Petrify, 5000, f.Session.Role!.Id);
             Assert.True(buffs.UnitHasGroup(monster, BuffService.PetrifyGroup));
-            Assert.Equal(guardian, buffs.UnitForbidden(monster, ForbiddenState.Walk));
-            Assert.Equal(guardian ? 1UL << 11 : 0, buffs.UnitStatus(monster)); // SpecialStatusConfig 12, Petrify
+            Assert.True(buffs.UnitForbidden(monster, ForbiddenState.Walk)); // a player's skill petrifies too, not only a guardian
+            Assert.Equal(1UL << 11, buffs.UnitStatus(monster)); // SpecialStatusConfig 12, Petrify
         });
     }
 
@@ -569,9 +569,9 @@ public sealed class GuardianPetTests
     }
 
     [Theory]
-    [InlineData(false, 250)]
+    [InlineData(false, 125)]
     [InlineData(true, 125)]
-    public async Task OnlyAGuardiansDebuffChangesAMonstersSpeed(bool guardian, int expectedCm)
+    public async Task AHostileSlowChangesAMonstersSpeedWhoeverAppliesIt(bool guardian, int expectedCm)
     {
         await using var f = new Fixture();
         await f.Start();
@@ -589,7 +589,7 @@ public sealed class GuardianPetTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task OnlyAGuardiansBlindLimitsThePlayersSight(bool guardian)
+    public async Task AHostileBlindLimitsThePlayersSightWhoeverAppliesIt(bool guardian)
     {
         await using var f = new Fixture();
         await f.Start();
@@ -601,8 +601,8 @@ public sealed class GuardianPetTests
             far.X += BuffService.BlindRadiusCm / 100f + 5;
             if (guardian) await buffs.AddGuardianAsync(f.Session, Blind, 5000, f.Session.Role!.Id);
             else await buffs.AddAsync(f.Session, Blind, 5000, f.Session.Role!.Id);
-            Assert.Equal(guardian, buffs.Blinded(f.Session));
-            Assert.Equal(!guardian, buffs.CanSeePosition(f.Session, far));
+            Assert.True(buffs.Blinded(f.Session));
+            Assert.False(buffs.CanSeePosition(f.Session, far));
             Assert.True(buffs.CanSeePosition(f.Session, f.Session.Position));
         });
     }

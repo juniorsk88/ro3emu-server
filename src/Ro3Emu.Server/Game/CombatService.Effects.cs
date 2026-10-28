@@ -62,6 +62,11 @@ public sealed partial class CombatService
             else if (ReviveOffer != null) await ReviveOffer(s, target, row);
             return;
         }
+        if (Script(row) == "GaBanTaYin")
+        {
+            await RemoveGroundEffectsAsync(s, action);
+            return;
+        }
         if (await CreateSkillObjectAsync(s, action))
         {
             // A field resolves its effects later; "After using [Meteor Storm] ..." talent procs centre on its target point.
@@ -169,7 +174,7 @@ public sealed partial class CombatService
             }
         }
         var stats = _character.Stats(s);
-        var attacker = new Fighter(stats[103], stats[104], stats[109], stats[111], s.Progress!.Level, 1);
+        var attacker = new Fighter(stats[103], stats[104], stats[109], stats[111], s.Progress!.Level, 1) { CritBonus = stats[200] + stats[237], EleIgnore = stats[235], PenDef = stats[217], PenDefPct = stats[218], PenMdef = stats[219], PenMdefPct = stats[220] };
         var hit = new SkillHitInfo
         {
             SrcID = field?.Uid ?? action.SourceId, SkillId = action.Request.SkillId, SessionId = action.Id,
@@ -233,10 +238,20 @@ public sealed partial class CombatService
             {
                 if (!CanApplyMoreEffects()) break;
                 if (field == null)
+                {
+                    int buffIndex = 0;
                     foreach (var tuple in Tuples(row, "_kBuff1"))
+                    {
+                        bool first = buffIndex++ == 0;
                         if (CanApplyMoreEffects() && RollBuff(tuple, out int id, out int duration)
                             && SkillBuffAllowed?.Invoke(s, recipient, id) != false)
-                            await _buffs.AddAsync(recipient, id, duration, castingRole.Id);
+                        {
+                            long shield = first ? SkillShield(script, row, stats) : 0;
+                            if (shield > 0) await _buffs.AddSupportAsync(recipient, id, duration, castingRole.Id, shield);
+                            else await _buffs.AddAsync(recipient, id, duration, castingRole.Id);
+                        }
+                    }
+                }
                 if (friendly && damage)
                 {
                     double multiplier = Numbers(row, "_kDamageParam1").FirstOrDefault(), flat = Numbers(row, "_kDamageParam2").FirstOrDefault();
@@ -245,16 +260,19 @@ public sealed partial class CombatService
                     foreach (var modifier in ExtraHeal) amount = modifier(s, amount);
                     var before = _character.Stats(recipient);
                     amount = ModifiedHealing(_buffs.GuardianAttributes(s), _buffs.GuardianAttributes(recipient), amount);
-                    long actual = Math.Min(amount, Math.Max(0, before[101] - before[2000]));
-                    await _character.SetHpSpAsync(recipient, before[2000] + amount, null);
-                    hit.Dsts.Add(new DamageInfo { DstID = recipient.Role!.Id, Damage = actual, DamageType = DamageType.Heal, DstElement = 1 });
+                    bool healCrit = options.Value.DamageBonusAttributes && amount > 0 && Rolls.Crit() < HealCritChance(stats);
+                    if (healCrit) amount = (long)Math.Round(amount * (1.5 + 0.5 * stats[209] / 10000d)); // FormulaParamCriDmg + FormulaParamHealCriC * Crit Damage%
+                    long received = options.Value.DamageBonusAttributes ? ScaleHealing(amount, stats[207], before[208], stats[1207], before[1208]) : amount;
+                    long actual = Math.Min(received, Math.Max(0, before[101] - before[2000]));
+                    await _character.SetHpSpAsync(recipient, before[2000] + received, null);
+                    hit.Dsts.Add(new DamageInfo { DstID = recipient.Role!.Id, Damage = actual, DamageType = DamageType.Heal, DstElement = 1, HitResult = healCrit ? DamageHitResult.Critical : DamageHitResult.Normal });
                     foreach (var handler in Healed) handler(s, actual);
                     foreach (var handler in HealedAsync) await handler(s, actual);
                 }
-                if (script is "Detoxify" or "HealingSkills")
+                if (script is "PoisonBoom" or "Cleanse") // the data names them Cleanse (Healing Skills) and PoisonBoom (Detoxify)
                 {
                     // (inferred) cleanse exact described groups rather than removing every beneficial/hostile status.
-                    int[] groups = script == "Detoxify" ? [9030] : [9023, 9025];
+                    int[] groups = script == "PoisonBoom" ? [9030] : [9023, 9025];
                     foreach (var buff in recipient.Buffs.Where(b => _data.Row("BuffConfig", b.ConfigId) is { } br && groups.Contains((int)GameData.Int(br, "_iBuffID"))).ToArray())
                         await _buffs.RemoveAsync(recipient, buff);
                 }
@@ -475,6 +493,9 @@ public sealed partial class CombatService
             ["WolvesDash"] = (DisplaceKind.CasterForward, 0, 0),
             ["HighspeedSlide"] = (DisplaceKind.CasterForward, 0, 0),
             ["HighspeedSlideMecha"] = (DisplaceKind.CasterForward, 0, 0),
+            ["DarkIllusion"] = (DisplaceKind.CasterForward, 1, 0),        // Shadow Step: "quickly dash ${2} meters toward the target"
+            ["yingliu"] = (DisplaceKind.CasterForward, 0, 0),             // Flowing Shadow: "dash ${1} meters as a phantom"
+            ["yingliuS1"] = (DisplaceKind.CasterForward, 0, 0),
             ["PinpointAttack"] = (DisplaceKind.CasterForward, 3, 0),
             ["ArrowRepel"] = (DisplaceKind.TargetPush, 3, 0),
             ["PileBunker"] = (DisplaceKind.TargetPush, 5, 0),
@@ -611,7 +632,7 @@ public sealed partial class CombatService
 
     private async Task DisplaceTargetAsync(GameSession s, ActiveSkillCast action, MonsterUnit target, Vec3 center)
     {
-        if (Displacement(action.Row) is not { } move || TargetMove(move.Kind, s, center) is not var (from, push)) return;
+        if (Displacement(action.Row) is not { } move || TargetMove(move.Kind, s, center) is not var (from, push) || _buffs.UnitImmuneToDisplacement(target)) return;
         float dx = target.X - from.X, dz = target.Z - from.Z;
         float length = MathF.Sqrt(dx * dx + dz * dz);
         if (length < 0.001f) return;
@@ -702,6 +723,15 @@ public sealed partial class CombatService
             case "Safety_Wall" or "Pneuma" when logic.Length >= 8:
                 npc = (int)logic[5]; duration = (int)logic[2]; radius = (float)(logic[7] / 100);
                 protection = script == "Safety_Wall" ? 1 : 2; charges = script == "Safety_Wall" ? (int)logic[1] : int.MaxValue; break;
+            // Sanctuary "for the next ${4} seconds, every ${5} seconds" in a ${2}m*${3}m area; Gravitation Field "lasts ${6} seconds and strikes a
+            // total of ${7} times" in a ${2}-meter radius; Ember Zone _kLogicData [interval ms, duration ms, ...]. The field NPCs are the ones whose
+            // names are the skill's (Sanctuary 22000003, Gravitation Field 1200013, Ember Zone 1200021).
+            case "Sanctuary" when Numbers(row, "_kDescData") is { Length: > 4 } zoneDesc && zoneDesc[3] > 0:
+                npc = 22000003; duration = (int)(zoneDesc[3] * 1000); interval = (int)Math.Max(100, zoneDesc[4] * 1000); radius = (float)(Math.Max(zoneDesc[1], zoneDesc[2]) / 2); break;
+            case "ZhongLiYuanYe" when Numbers(row, "_kDescData") is { Length: > 6 } zoneDesc && zoneDesc[5] > 0 && zoneDesc[6] > 0:
+                npc = 1200013; duration = (int)(zoneDesc[5] * 1000); interval = (int)Math.Max(100, duration / zoneDesc[6]); radius = (float)zoneDesc[1]; break;
+            case "YuJinDiDai" when logic.Length >= 2:
+                npc = 1200021; interval = (int)logic[0]; duration = (int)logic[1]; break;
             case "LandMine": npc = 22000016; trap = true; break;
             case "ClaymoreTrap": npc = 22000017; trap = true; break;
             case "FreezingTrap": npc = 22000018; trap = true; break;
@@ -738,6 +768,18 @@ public sealed partial class CombatService
         foreach (var tuple in Tuples(row, "_kBuff1"))
             if (RollBuff(tuple, out int buffId, out int buffDuration)) await _buffs.AddAsync(s, buffId, buffDuration, s.Role.Id);
         return true;
+    }
+
+    /// <summary>Ganbantein: "Removes up to ${3} ground effects from a designated area with a radius of ${2} meters" (the zones other casters laid, nearest first).</summary>
+    private async Task RemoveGroundEffectsAsync(GameSession s, ActiveSkillCast action)
+    {
+        var desc = Numbers(action.Row, "_kDescData");
+        if (desc.Length < 3) return;
+        var center = action.Request.TargetPos ?? action.Origin;
+        var zones = _world.Map(s.WorldScene).Units.OfType<SkillObject>()
+            .Where(z => !z.Removing && z.ProtectionDistanceType == 0 && !z.Trap && Distance(z.Pos, center) <= desc[1] + 0.1)
+            .OrderBy(z => Distance(z.Pos, center)).ThenBy(z => z.Uid).Take((int)desc[2]).ToList();
+        foreach (var zone in zones) await RemoveSkillObjectAsync(zone);
     }
 
     private async Task TickSkillObjectAsync(SkillObject unit)

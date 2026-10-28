@@ -110,17 +110,4 @@ public sealed partial class DungeonService
 
     private Task ClearBondsAsync(GameSession s, Attempt attempt) => Task.WhenAll(s.Buffs
         .Where(b => b.SourceId == attempt.Room.Id).ToArray().Select(b => _buffs.RemoveAsync(s, b)));
-
-    /// <summary>(inferred) Additive basis-point bonus/reduction applied to the owner's dungeon boss damage only.</summary>
-    private long BondDamage(GameSession s, MonsterUnit monster, long damage, bool incoming)
-    {
-        if (damage <= 0 || Active(s) is not { } attempt || attempt.Plan.Boss is not { } boss
-            || monster.InstanceId != attempt.Room.Id || monster.Template.NpcId != GameData.Int(boss, "_iBoss")) return damage;
-        var roster = BondRoster(attempt, s);
-        long attribute = incoming ? 602 : 601;
-        double bonus = BondBuffs(boss, s, roster).Sum(id => _data.Row("BuffConfig", id) is { } row
-            ? GameData.Pairs(row, "_kChangeAttri").Where(p => p.Id == attribute).Sum(p => p.Value) : 0);
-        decimal factor = Math.Max(0, 10000m + (incoming ? -1 : 1) * (decimal)bonus) / 10000m;
-        return (long)Math.Clamp(decimal.Round(damage * factor, 0, MidpointRounding.AwayFromZero), 1m, long.MaxValue);
-    }
 }

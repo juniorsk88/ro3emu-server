@@ -120,6 +120,75 @@ public sealed class SkillVisualTests : IDisposable
         Assert.Equal(0, visual.BulletEffect);
     }
 
+    [Fact]
+    public void DamageBonusAttributesScaleTheHitByItsKind()
+    {
+        long Stat(int id) => id switch { 213 => 1000, 211 => 500, 215 => 200, 225 => 300, 250 => 100, 252 => 400, 209 => 3000, _ => 0 };
+        // A magic skill, ranged: 215 + 213 + 252 + 225 = 200 + 1000 + 400 + 300 = 1900 -> x1.19
+        Assert.Equal(1190, CombatService.ApplyDamageBonuses(1000, magic: true, ranged: true, normalAttack: false, critical: false, Stat));
+        // The normal attack gets no skill bonus: 200 + 1000 + 400 -> x1.16
+        Assert.Equal(1160, CombatService.ApplyDamageBonuses(1000, magic: true, ranged: true, normalAttack: true, critical: false, Stat));
+        // A melee physical skill uses 211 (+ 227 = 0): 200 + 500 + 300 -> x1.10
+        Assert.Equal(1100, CombatService.ApplyDamageBonuses(1000, magic: false, ranged: false, normalAttack: false, critical: false, Stat));
+        // A critical hit also scales by (15000 + 3000) / 15000 = 1.2
+        Assert.Equal(1320, CombatService.ApplyDamageBonuses(1000, magic: false, ranged: false, normalAttack: false, critical: true, Stat));
+        // No attributes: unchanged.
+        Assert.Equal(777, CombatService.ApplyDamageBonuses(777, true, true, false, false, _ => 0));
+    }
+
+    [Fact]
+    public void ElementRaceSizeAndBossAttributesFollowTheMonsterAndTheSkillElement()
+    {
+        // Fire skill (304) +10%, vs earth monsters (323) +5%, vs race 4 (plant, 404) +20%, vs large (505) +10%, vs boss (601) +15%.
+        long Stat(int id) => id switch { 304 => 1000, 323 => 500, 404 => 2000, 505 => 1000, 601 => 1500, 603 => 7000, _ => 0 };
+        var plantBoss = new CombatService.HitSide(Element: 3, Race: 4, Size: 3, Boss: true);
+        Assert.Equal(1600, CombatService.ApplyDamageBonuses(1000, false, false, true, false, Stat, plantBoss, skillElement: 4));
+        // A non-boss uses 603 instead of 601; a neutral skill misses 304.
+        var plain = plantBoss with { Boss = false };
+        Assert.Equal(2050, CombatService.ApplyDamageBonuses(1000, false, false, true, false, Stat, plain, skillElement: 1));
+        // Reductions read the "taken" twins: 312 wind skill, 333 earth monster, 414 plant, 506 large, 602 boss.
+        long Cut(int id) => id switch { 312 => 1000, 333 => 500, 414 => 1000, 506 => 500, 602 => 1000, _ => 0 };
+        Assert.Equal(600, CombatService.ApplyDamageReductions(1000, false, false, false, Cut, plantBoss, skillElement: 2));
+        Assert.Equal(1000, CombatService.ApplyDamageReductions(1000, false, false, false, Cut, null, skillElement: 2));
+    }
+
+    [Fact]
+    public void DamageReductionAttributesCutWhatMonstersDealAndHealingAttributesScaleHeals()
+    {
+        long Stat(int id) => id switch { 216 => 1000, 212 => 500, 214 => 2000, 232 => 500, 210 => 3000, _ => 0 };
+        // Physical: 216 + 232 + 212 = 2000 -> x0.8
+        Assert.Equal(800, CombatService.ApplyDamageReductions(1000, magic: false, critical: false, Stat));
+        // Magic: 216 + 232 + 214 = 3500 -> x0.65
+        Assert.Equal(650, CombatService.ApplyDamageReductions(1000, magic: true, critical: false, Stat));
+        // A critical hit is cut again by (15000 - 3000) / 15000 = 0.8
+        Assert.Equal(640, CombatService.ApplyDamageReductions(1000, magic: false, critical: true, Stat));
+        // Never more than 90% off, and never below 1
+        Assert.Equal(100, CombatService.ApplyDamageReductions(1000, false, false, id => id == 216 ? 50000 : 0));
+        Assert.Equal(1, CombatService.ApplyDamageReductions(1, false, false, id => id == 216 ? 50000 : 0));
+        Assert.Equal(1000, CombatService.ApplyDamageReductions(1000, false, false, _ => 0));
+        Assert.Equal(1150, CombatService.ScaleHealing(1000, 1000, 500));
+    }
+
+    [Fact]
+    public void TheSecondBucketCastAttributesAndHealCritsFollowTheClientFormulas()
+    {
+        // The "12xx" bucket multiplies the 21x one: (1 + 0.10) * (1 + 0.50) = 1.65
+        long Pool(int id) => id switch { 215 => 1000, 1215 => 5000, _ => 0 };
+        Assert.Equal(1650, CombatService.ApplyDamageBonuses(1000, magic: true, ranged: false, normalAttack: true, critical: false, Pool));
+        // Reductions: melee physical 228 and the 12xx bucket (1 - 0.2) * (1 - 0.25)
+        long Cut(int id) => id switch { 212 => 1000, 228 => 1000, 1216 => 2500, _ => 0 };
+        Assert.Equal(600, CombatService.ApplyDamageReductions(1000, magic: false, ranged: false, critical: false, Cut));
+        Assert.Equal(675, CombatService.ApplyDamageReductions(1000, magic: false, ranged: true, critical: false, Cut)); // 230 is not set: 212 (10%) and 1216 (25%)
+        // Healing: (1 + 0.10) * (1 + 0.10)
+        Assert.Equal(1210, CombatService.ScaleHealing(1000, 1000, 0, 1000, 0));
+        Assert.Equal(1300, CombatService.ScaleHealing(1000, 0, 0, 3000, 0));
+        // Cast: variable x max(0, 1 - sqrt(c/600) + pre/10000), fixed x (1 + pre/10000); Arcane Acceleration is -8000 on both
+        var row = System.Text.Json.JsonDocument.Parse("{\"_iChantFix\":500,\"_iChantVar\":1500}").RootElement;
+        Assert.Equal(2000, CombatService.ChantOf(row, 0, 0, 0));
+        Assert.Equal(400, CombatService.ChantOf(row, 0, -8000, -8000)); // 500*0.2 + 1500*0.2
+        Assert.Equal(2400, CombatService.ChantOf(row, 0, 2500, 500)); // Phen +25% variable, 5% fixed: 500*1.05 + 1500*1.25
+    }
+
     [Theory]
     [InlineData("""{"_kShowDmg":[5]}""", 5)]
     [InlineData("""{"_kShowDmg":[3,1]}""", 3)]

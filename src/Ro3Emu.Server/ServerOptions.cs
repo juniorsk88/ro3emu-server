@@ -273,6 +273,26 @@ public sealed class ServerOptions
     /// </summary>
     public int PresetSwitchCooldown { get; set; }
 
+    /// <summary>
+    /// A player's damage bonuses (Magic/Physical Damage Bonus% 213/211, Damage Increase% 215, Skill Damage Increase% 225, melee/ranged,
+    /// Crit Damage% 209) scale the damage it deals to monsters; cards and gear that grant them take effect. Ro3Emu__DamageBonusAttributes=false
+    /// leaves the damage at ATK/MATK, skill ratio, defense and element only.
+    /// </summary>
+    public bool DamageBonusAttributes { get; set; } = true;
+
+    /// <summary>
+    /// Cast-time and cooldown attributes of the player (cards, buffs, potions): Variable CT 202 / Fixed CT 204 change the chant, Skill CD% 205 and
+    /// Global CD% 206 shorten the skill's own and the public cooldown (positive = shorter, as Arcane Acceleration and the Cooldown Potion list them).
+    /// Ro3Emu__CastAttributes=false leaves chant and cooldown at the data's values (and the DEX reduction).
+    /// </summary>
+    public bool CastAttributes { get; set; } = true;
+
+    /// <summary>
+    /// Equipping needs the piece's level and career (ItemConfig._iLevelNeed / _kJobNeed, any parent of the player's career counts).
+    /// Off by default (the client already greys the piece out, and the server never checked); Ro3Emu__EquipRequirements=true enforces it.
+    /// </summary>
+    public bool EquipRequirements { get; set; }
+
     /// <summary>Diagnostics: logs, for every damaging player skill hit on a monster, the attacker's Matk/Atk, the monster's level, defences and element and the damage before/after rolls. Ro3Emu__DamageTrace=true.</summary>
     public bool DamageTrace { get; set; }
 

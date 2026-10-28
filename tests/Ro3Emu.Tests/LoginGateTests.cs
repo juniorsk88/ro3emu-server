@@ -71,13 +71,17 @@ public sealed class LoginGateTests : IAsyncLifetime
         var early = Ids().Where(id => Routes.RequiredStage(id) < SessionStage.World)
             .ToDictionary(id => id, id => Routes.RequiredStage(id));
 
-        Assert.Equal(new Dictionary<uint, SessionStage>
+        var expected = new Dictionary<uint, SessionStage>
         {
             [MsgId.Heartbeat] = SessionStage.Connected,
             [MsgId.LoginRoleCreate] = SessionStage.RoleScreen,
             [MsgId.LoginRoleSelect] = SessionStage.RoleScreen,
             [MsgId.UploadClientSdkInfo] = SessionStage.RoleScreen,
-        }, early);
+        };
+        // This realm's client hooks (77001..: feedback button, level-up effect, ...) say hello before the world too, on the connection alone.
+        var hooks = early.Where(p => p.Key is >= 77000 and < 78000).ToList();
+        Assert.All(hooks, p => Assert.Equal(SessionStage.Connected, p.Value));
+        Assert.Equal(expected.OrderBy(p => p.Key).ToList(), early.Where(p => p.Key is < 77000 or >= 78000).OrderBy(p => p.Key).ToList());
     }
 
     [Fact]

@@ -121,10 +121,11 @@ public sealed partial class DungeonTests
             var combat = Service<CombatService>();
             var skill = Service<GameData>().Row("SkillConfig", 1100001)!.Value;
             long dealt = combat.DamageAdjusters.Aggregate(10000L, (n, f) => f(Session(alice), boss, skill, DamageHitResult.Normal, n));
-            long taken = 10000;
-            foreach (var f in combat.IncomingDamageAdjusters) taken = await f(boss, Session(alice), DamageHitResult.Normal, taken);
+            // The bond buffs change attributes 601 (damage to bosses) and 602 (reduction from them); the combat core applies both.
+            var stats = Service<CharacterService>().Stats(Session(alice));
             Assert.Equal(10500, dealt);
-            Assert.Equal(9500, taken);
+            Assert.Equal(500, stats[601]);
+            Assert.Equal(500, stats[602]);
             Assert.Empty(Session(alice).Dungeons!.Records); // buffs do not mint completion rewards
         });
         // Leaving the party while staying inside cannot retain a five-class party bonus.
@@ -134,9 +135,9 @@ public sealed partial class DungeonTests
         {
             var combat = Service<CombatService>();
             var skill = Service<GameData>().Row("SkillConfig", 1100001)!.Value;
+            await Service<DungeonService>().ReconcileAsync(Session(alice)); // the bonus is the buffs' own 601 now, so the roster change shows once they are reconciled
             Assert.Equal(10200, combat.DamageAdjusters.Aggregate(10000L,
                 (n, f) => f(Session(alice), boss, skill, DamageHitResult.Normal, n)));
-            await Service<DungeonService>().ReconcileAsync(Session(alice));
             Assert.DoesNotContain(Session(alice).Buffs, b => b.ConfigId == 990101);
             Assert.DoesNotContain(Session(eric).Buffs, b => b.SourceId == instance);
         });

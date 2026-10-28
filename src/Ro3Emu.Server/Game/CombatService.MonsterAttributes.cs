@@ -29,16 +29,18 @@ public sealed partial class CombatService
         return StatCalculator.Compute(raw, _data);
     }
 
+    private const int ElementCounterImmunityGroup = 9108; // BuffConfig 910801
+
     private Fighter MonsterFighter(MonsterUnit unit)
     {
         var t = unit.Template;
         // The template as it was before guardians, without the per-hit attribute pass when nothing overlays it.
         if (!_buffs.HasGuardianUnitBuffs(unit))
-            return new(t.Atk, t.Matk, t.Hit, t.Cri, t.Level, t.Element) { Def = t.Def, Mdef = t.Mdef, Flee = t.Flee };
+            return new(t.Atk, t.Matk, t.Hit, t.Cri, t.Level, t.Element) { Def = t.Def, Mdef = t.Mdef, Flee = t.Flee, NoElement = _buffs.UnitHasGroup(unit, ElementCounterImmunityGroup) };
         var stats = MonsterStats(unit);
         return new(stats[AttributeId.Atk], stats[AttributeId.Matk], stats[AttributeId.Hit], stats[AttributeId.Cri], unit.Template.Level,
             unit.Template.Element)
-        { Def = stats[AttributeId.Def], Mdef = stats[AttributeId.Mdef], Flee = stats[AttributeId.Flee], ResCri = stats[AttributeId.ResCri] };
+        { Def = stats[AttributeId.Def], Mdef = stats[AttributeId.Mdef], Flee = stats[AttributeId.Flee], ResCri = stats[AttributeId.ResCri], NoElement = _buffs.UnitHasGroup(unit, ElementCounterImmunityGroup) };
     }
 
     private long MonsterBuffDamage(MonsterUnit monster, JsonElement? skill, long amount)

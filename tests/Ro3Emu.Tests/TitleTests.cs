@@ -29,6 +29,7 @@ public sealed class TitleTests : IAsyncLifetime
         {
             o.DataDir = _dataDir; o.GameDataDir = Path.Combine(ClientData.RepoRoot, "data");
             o.HttpPort = httpPort; o.MicroGatePort = microPort; o.GameGatePort = gamePort;
+            o.OpenContent.Functions = [.. o.OpenContent.Functions, 14]; // the realm keeps Title closed (no client panel); the backend is tested open
             o.OpenContent.Enabled = true; // function 14 is opened by OpenContent only
         });
         await _app.StartAsync();

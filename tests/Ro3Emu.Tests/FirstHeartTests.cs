@@ -1,3 +1,4 @@
+using Ro3Emu.Server.Data;
 using Google.Protobuf;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
@@ -24,6 +25,10 @@ public sealed class FirstHeartTests : IAsyncLifetime
     private readonly string _dataDir = Path.Combine(Path.GetTempPath(), "ro3emu-firstheart-" + Guid.NewGuid().ToString("N"));
     private WebApplication _app = null!;
     private string _http = "";
+
+    /// <summary>The base level condition 21000012 asks in the data in use (the original export says 30, this realm's data 10).</summary>
+    private int DataOpenLevel() => Service<GameData>().Row("LC_ConditionList", 21000012) is { } cond
+        && cond.GetProperty("m_kSubConditionList")[0].GetProperty("m_kData") is { } data ? (int)(GameData.Number(data[1]) ?? OpenLevel) : OpenLevel;
 
     private T Service<T>() where T : notnull => _app.Services.GetRequiredService<T>();
     private Task<T> Read<T>(Func<T> read) => Service<GameLoop>().InvokeAsync(() => Task.FromResult(read()));
@@ -120,7 +125,7 @@ public sealed class FirstHeartTests : IAsyncLifetime
         Assert.Null(await Cfg(s));
         Assert.False(await Read(() => s.Synced.ContainsKey(FirstHeartService.Sync)));
         Assert.Equal(ErrorCodes.ActivityClosed, await ClaimTask(alice, LevelTen));
-        await Gm(alice, $"!lvl {OpenLevel - 1}");
+        await Gm(alice, $"!lvl {DataOpenLevel() - 1}");
         Assert.Equal(ErrorCodes.ActivityClosed, await ClaimTask(alice, LevelTen));
 
         await Gm(alice, $"!lvl {OpenLevel}");

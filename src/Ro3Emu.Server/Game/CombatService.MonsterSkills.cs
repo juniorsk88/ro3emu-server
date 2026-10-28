@@ -35,12 +35,13 @@ public sealed partial class CombatService
             bool Current() => ReferenceEquals(p.Role, targetRole) && p.WorldScene == scene && p.SceneGeneration == generation
                 && ReferenceEquals(p.Attachment, lease) && lease?.Cancelled != true;
             var stats = _character.Stats(p);
-            var defender = new Fighter(0, 0, 0, 0, p.Progress.Level, 1) { Def = stats[105], Mdef = stats[106], Flee = stats[110], ResCri = stats[112] };
+            var defender = new Fighter(0, 0, 0, 0, p.Progress.Level, ArmorElement(p)) { Def = stats[105], Mdef = stats[106], Flee = stats[110], ResCri = stats[112], CritReduce = stats[238], EleResist = stats[236] };
             var (damage, result) = Damage(attacker, defender, row);
             damage = ScaleMonsterDamage(damage, caster.DamageRatio);
             damage = MonsterBuffDamage(caster, row, damage);
             if (damagePercent != 100) damage = damagePercent <= 0 ? 0 : ScaleMonsterDamage(damage, damagePercent * 100);
             foreach (var adjust in MonsterDamageAdjusters) damage = adjust(caster, damage, true);
+            damage = ReduceIncomingDamage(p, damage, row, result, stats, caster);
             if (damage > 0) foreach (var modifier in IncomingDamageAdjusters) damage = Math.Max(0, await modifier(caster, p, result, damage));
             var committed = await CommitPlayerDamageAsync(p, damage, row, Current, sourceElement: element);
             if (committed == null) continue;

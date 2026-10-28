@@ -255,6 +255,17 @@ public sealed partial class CombatService : IGameTicker
     internal Func<GameSession, GameSession, int, bool>? SkillBuffAllowed { get; set; }
     public List<Func<GameSession, MonsterUnit, JsonElement, DamageHitResult, long, long>> DamageAdjusters { get; } = new();
     public List<Func<GameSession, MonsterUnit, JsonElement, long, long>> ExtraHitDamage { get; } = new();
+
+    /// <summary>A skill's cooldown has just started for the role (card effects: a chance to reset it).</summary>
+    public List<Func<GameSession, JsonElement, Task>> SkillCooldownStarted { get; } = new();
+
+    /// <summary>The element of the role's armor (EleConfig row): 1 neutral unless a card changes it.</summary>
+    public Func<GameSession, int>? ArmorElementOf { get; set; }
+
+    /// <summary>A hit that a card nullifies completely (true for a magic hit that is cancelled); asked once per incoming hit.</summary>
+    public List<Func<GameSession, bool, bool>> IncomingHitNegators { get; } = new();
+
+    private int ArmorElement(GameSession p) => ArmorElementOf?.Invoke(p) is > 0 and var e ? e : 1;
     public List<Func<GameSession, MonsterUnit, JsonElement, long, Task>> DealtAsync { get; } = new();
     public List<Func<GameSession, long, long>> ExtraHeal { get; } = new();
     public List<Func<MonsterUnit, GameSession, DamageHitResult, long, Task<long>>> IncomingDamageAdjusters { get; } = new();
@@ -288,6 +299,7 @@ public sealed partial class CombatService : IGameTicker
         WireGuardians();
         monsters.Attack = MonsterAttackAsync;
         buffs.ImmuneDeathDeclined = PlayerDiesAsync;
+        buffs.ControlApplied = InterruptCastByControlAsync;
         scene.Leaving.Add(ClearSkillsAsync);
         scene.Leaving.Add(buffs.ClearOnSceneAsync);
         character.ExtraAttributes.Add(PassiveAttributes);
@@ -303,6 +315,7 @@ public sealed partial class CombatService : IGameTicker
         character.ProgressHandlers.Add(buffs.ReconcileEnergyAsync);
         monsters.AttackPet = MonsterAttackPetAsync;
         buffs.UnitChanged.Add(PublishTowerPetStatsAsync);
+        DamageAdjusters.Add(PlayerBonusDamage);
         WireBuffRules();
         WireBossSkills();
     }
@@ -528,12 +541,13 @@ public sealed partial class CombatService : IGameTicker
             if (MonsterService.Distance(m, p) > m.Template.AttackRange + 2f || !_buffs.CanSeePosition(m, p.Position)) return; // stepped away
             var stats = _character.Stats(p);
             var attacker = MonsterFighter(m);
-            var defender = new Fighter(0, 0, 0, 0, p.Progress!.Level, 1) { Def = stats[105], Mdef = stats[106], Flee = stats[110], ResCri = stats[112] };
+            var defender = new Fighter(0, 0, 0, 0, p.Progress!.Level, ArmorElement(p)) { Def = stats[105], Mdef = stats[106], Flee = stats[110], ResCri = stats[112], CritReduce = stats[238], EleResist = stats[236] };
             var row = _data.Row("SkillConfig", m.Template.NormalSkill);
             var (damage, result) = row is { } r ? Damage(attacker, defender, r) : (Math.Max(1, m.Template.Atk), DamageHitResult.Normal);
             damage = ScaleMonsterDamage(damage, m.DamageRatio);
             damage = MonsterBuffDamage(m, row, damage);
             foreach (var adjust in MonsterDamageAdjusters) damage = adjust(m, damage, true);
+            damage = ReduceIncomingDamage(p, damage, row, result, stats, m);
             if (damage > 0) foreach (var modifier in IncomingDamageAdjusters) damage = Math.Max(0, await modifier(m, p, result, damage));
             var committed = await CommitPlayerDamageAsync(p, damage, row,
                 () => !m.Dead && m.Hp > 0 && ReferenceEquals(p.Role, targetRole)
@@ -590,7 +604,7 @@ public sealed partial class CombatService : IGameTicker
                 && (b.SourceId is >= TowerPetUnit.UidBase and < TowerPetUnit.UidLimit || b.IsGuardianOwned))
             .SelectMany(b => b.Changes).Select(c => (c.Attr, c.Value)), row, sourceElement);
         long beforeShield = damage;
-        damage = await _buffs.AbsorbAsync(target, damage);
+        damage = await _buffs.AbsorbAsync(target, damage, row is { } hit && GameData.Int(hit, "_iDmgType") == 2);
         long shieldDamage = beforeShield - damage;
         if (!ReferenceEquals(target.Role, targetRole) || target.SceneLoading || valid?.Invoke() == false) return null;
         long before = _character.Stats(target)[2000];
@@ -616,10 +630,23 @@ public sealed partial class CombatService : IGameTicker
 
     private sealed record Fighter(long Atk, long Matk, long Hit, long Cri, int Level, int Element)
     {
+        /// <summary>Crit Chance% / Crit Bonus (237, 200) of the attacker and Crit Resistance% (238) of the defender, in basis points. (inferred: they add to the chance)</summary>
+        public long CritBonus { get; init; }
+        public long CritReduce { get; init; }
         public long Def { get; init; }
         public long Mdef { get; init; }
         public long Flee { get; init; }
         public long ResCri { get; init; }
+        /// <summary>Elemental Counter Ignore% (235) of the attacker and Elemental Counter Resistance% (236) of the defender, in basis points.</summary>
+        public long EleIgnore { get; init; }
+        public long EleResist { get; init; }
+        /// <summary>"Element Counter Immunity" (buff 910801, the born buff of 102 monsters): "Element advantages and disadvantages do not affect you".</summary>
+        public bool NoElement { get; init; }
+        /// <summary>Physical / Magic Penetration (217 / 219, flat) and Penetration% (218 / 220, basis points): the share of the target's DEF / MDEF the hit ignores.</summary>
+        public long PenDef { get; init; }
+        public long PenDefPct { get; init; }
+        public long PenMdef { get; init; }
+        public long PenMdefPct { get; init; }
     }
 
     private (long Damage, DamageHitResult Result) Damage(Fighter a, Fighter b, JsonElement skill, int branch = 0,
@@ -630,8 +657,8 @@ public sealed partial class CombatService : IGameTicker
         double dmg = BaseDamage(a, b, skill, branch, out bool magic);
         dmg *= 0.97 + Rolls.DamageFloat() * 0.06; // DamageFloat [9700, 10300]
         var result = DamageHitResult.Normal;
-        // (inferred) Miguel's guardian crit bonus (bonusCrit/forceCrit) also lets a magic hit crit; nothing else changes.
-        if (forceCrit || (!magic || bonusCrit > 0) && Rolls.Crit() < CritRate(a, b, skill) + bonusCrit)
+        // (inferred) Miguel's guardian crit bonus (bonusCrit/forceCrit) also lets a magic hit crit; magic skills crit by their _iSkillCri too.
+        if (forceCrit || Rolls.Crit() < CritRate(a, b, skill) + bonusCrit)
         {
             dmg *= 1.5; // FormulaParamCriDmg 15000
             result = DamageHitResult.Critical;
@@ -643,8 +670,14 @@ public sealed partial class CombatService : IGameTicker
     private static double HitRate(Fighter a, Fighter b, JsonElement skill) => GameData.Int(skill, "_iSkillHit") >= 10000 ? 1
         : Math.Clamp(1 - b.Flee / (double)(b.Flee + 600) + a.Hit / (double)(a.Hit + 600) * 0.5, 0.3, 1.0);
 
-    private static double CritRate(Fighter a, Fighter b, JsonElement skill) =>
-        Math.Max(0, a.Cri - b.ResCri) / 10000.0 * GameData.Int(skill, "_iSkillCri") / 10000.0;
+    /// <summary>The critical chance of a hit (magic skills too: _iSkillCri is 10000 on most of them and the client's CRIT tooltip names damage and healing skills).</summary>
+    private static double CritRate(Fighter a, Fighter b, JsonElement skill)
+    {
+        long skillCri = GameData.Int(skill, "_iSkillCri");
+        double chance = Math.Max(0, a.Cri - b.ResCri) / 10000.0 * skillCri / 10000.0;
+        if (skillCri > 0) chance += (a.CritBonus - b.CritReduce) / 10000.0;
+        return Math.Clamp(chance, 0, 1);
+    }
 
     /// <summary>The roll-free part of a hit: skill ratio and flat, defense and element.</summary>
     private double BaseDamage(Fighter a, Fighter b, JsonElement skill, int branch, out bool magic)
@@ -653,20 +686,30 @@ public sealed partial class CombatService : IGameTicker
         var ratios = Numbers(skill, "_kDamageParam1");
         var flats = Numbers(skill, "_kDamageParam2");
         double p1 = ratios.Length > branch ? ratios[branch] : 10000, p2 = flats.Length > branch ? flats[branch] : 0;
+        // Soul Expansion launches "${2} bursts ... dealing @{1} instances of damage equal to MATK * ${3}%": its two equal entries are two bursts, delivered
+        // as one number. (inferred: the other multi-valued skills mix branches and hits, and need their own description read first)
+        if (ratios.Length > 1 && new Ro3Emu.Server.Data.Config.SkillConfig(skill).ScriptLogic is "SoulExpansion" or "SoulExpansion_Copy") p1 = ratios.Sum();
         double dmg = (magic ? a.Matk : a.Atk) * p1 / 10000 + p2;
         // Defense: def / (def + ParDef 20 × the defender's level), the shape of the client's damage-reduction tooltip.
         double def = magic ? b.Mdef : b.Def;
+        // Penetration: the percentage first, then the flat amount. (inferred order; the tooltip only says "ignore the target's PDEF")
+        def = Math.Max(0, def * (1 - Math.Clamp((magic ? a.PenMdefPct : a.PenDefPct) / 10000.0, 0, 1)) - (magic ? a.PenMdef : a.PenDef));
         dmg *= 1 - def / (def + 20.0 * Math.Max(1, b.Level));
         // Element: EleConfig row = defender element, column = attacker element (/10000), clamped [0.1, 10].
         int element = (int)GameData.Int(skill, "_iEleType") is var se and > 1 ? se : a.Element;
-        return dmg * Math.Clamp(1 + ElementFactor(element, b.Element) / 10000.0, 0.1, 10);
+        double factor = a.NoElement || b.NoElement ? 1 : Math.Clamp(1 + ElementFactor(element, b.Element) / 10000.0, 0.1, 10);
+        // 235 "Increases damage dealt when your attack element is at a disadvantage", 236 "Reduces damage taken when your defensive element is
+        // at a disadvantage": they pull the multiplier towards 1. (inferred: linear, 10000 = the whole disadvantage removed)
+        if (factor < 1 && a.EleIgnore != 0) factor += (1 - factor) * Math.Clamp(a.EleIgnore / 10000.0, -1, 1);
+        else if (factor > 1 && b.EleResist != 0) factor -= (factor - 1) * Math.Clamp(b.EleResist / 10000.0, -1, 1);
+        return dmg * factor;
     }
 
     /// <summary>The expected damage of one hit (hit rate, mean float, crit share) from the same formula.</summary>
     private double ExpectedDamage(Fighter a, Fighter b, JsonElement skill)
     {
         double dmg = Math.Max(1, BaseDamage(a, b, skill, 0, out bool magic));
-        return HitRate(a, b, skill) * dmg * (magic ? 1 : 1 + 0.5 * CritRate(a, b, skill));
+        return HitRate(a, b, skill) * dmg * (1 + 0.5 * CritRate(a, b, skill));
     }
 
     /// <summary>
@@ -678,7 +721,7 @@ public sealed partial class CombatService : IGameTicker
     {
         var stats = _character.Stats(p);
         var playerSkill = _data.Row("SkillConfig", _skills.NormalAttack(p.Progress!.Career))!.Value;
-        var player = new Fighter(stats[103], stats[104], stats[109], stats[111], p.Progress.Level, 1);
+        var player = new Fighter(stats[103], stats[104], stats[109], stats[111], p.Progress.Level, 1) { EleIgnore = stats[235], PenDef = stats[217], PenDefPct = stats[218], PenMdef = stats[219], PenMdefPct = stats[220] };
         var asTarget = new Fighter(0, 0, m.Flee, 0, m.Level, m.Element) { Def = m.Def, Mdef = m.Mdef, Flee = m.Flee };
         double playerDps = ExpectedDamage(player, asTarget, playerSkill) * 1000.0 / Math.Max(1, SkillMs(p, playerSkill));
         var monster = new Fighter(m.Atk, m.Matk, m.Hit, m.Cri, m.Level, m.Element);

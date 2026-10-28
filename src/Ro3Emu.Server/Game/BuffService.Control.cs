@@ -76,6 +76,11 @@ public sealed partial class BuffService
             await RemoveAsync(player, buff);
     }
 
+    /// <summary>A unit holding a displacement immunity (category 19: Super Armor 9031) is not knocked back, pulled or lifted by a skill.</summary>
+    internal bool UnitImmuneToDisplacement(WorldUnit unit) => _unitBuffs.TryGetValue(unit.Uid, out var buffs)
+        && buffs.Any(b => b.ExpireMs > MonsterService.NowMs && BuffConfig.Get(_data, b.ConfigId) is { } row
+            && row.BuffCategory.Contains(DisplacementImmunityCategory));
+
     internal bool UnitForbidden(WorldUnit unit, int ordinal) => _unitBuffs.TryGetValue(unit.Uid, out var buffs)
         && buffs.Any(b => b.ExpireMs > MonsterService.NowMs && b.StateOrdinal > 0
             && _data.Row("SpecialStatusConfig", b.StateOrdinal) is { } state

@@ -343,6 +343,9 @@ public sealed partial class CombatService
             }
         }
         if (result.Attrs.TryGetValue(AttributeId.Sp, out long sp)) result.Attrs[AttributeId.Sp] = ModifiedSpCost(_buffs.GuardianAttributes(s), sp);
+        // MP Cost 1231/1232 (basis points; the Mistress card is -20%, a Pharaoh card +15%): the SP a skill takes. (inferred: they add up)
+        if (options.Value.CastAttributes && result.Attrs.TryGetValue(AttributeId.Sp, out long spNow) && spNow > 0)
+            result.Attrs[AttributeId.Sp] = Math.Max(0, (long)Math.Round(spNow * Math.Max(0, 1 + (stats[1231] + stats[1232]) / 10000.0)));
         return result;
     }
 
@@ -388,6 +391,14 @@ public sealed partial class CombatService
     {
         int group = (int)GameData.Int(row, "_iSkillID"), mode = (int)GameData.Int(row, "_iMode");
         long now = Now, cd = GameData.Int(row, "_iCD");
+        double ownFactor = 1, publicFactor = 1;
+        if (options.Value.CastAttributes)
+        {
+            var stats = _character.Stats(s); // Skill CD% 205 and Global CD% 206: positive = shorter (Arcane Acceleration +8000, Cooldown Potion +1000)
+            ownFactor = Math.Clamp(1 - stats[205] / 10000.0, 0, 2);
+            publicFactor = Math.Clamp(1 - stats[206] / 10000.0, 0, 2);
+            cd = (long)Math.Round(cd * ownFactor);
+        }
         var notice = new SkillCdNotify { Uuid = s.Role!.Id };
         void Set(int g, int m, long duration, bool shared, int shownMode)
         {
@@ -410,9 +421,10 @@ public sealed partial class CombatService
         {
             int sibling = (int)groups[i];
             if (_data.Row("SkillConfig", sibling) is { } siblingRow) sibling = (int)GameData.Int(siblingRow, "_iSkillID");
-            if (sibling > 0) Set(sibling, 0, (long)shared[i], true, 0);
+            if (sibling > 0) Set(sibling, 0, (long)Math.Round(shared[i] * publicFactor), true, 0);
         }
         if (notice.Infos.Count > 0) await s.SendGameAsync(SkillCdUpdate, notice);
+        if (cd > 0) foreach (var handler in SkillCooldownStarted) await handler(s, row);
     }
 
     /// <summary>Legacy auto-attack entry point, using the same cancellation-safe cast owner as manual skills.</summary>
@@ -531,6 +543,15 @@ public sealed partial class CombatService
         await s.SendGameAsync(SkillInterrupt, new SkillInterruptResp { IsInterruptSucc = interrupted });
         if (interrupted && req?.NxtSkill is { } next) await CastAsync(s, next);
     }
+
+    /// <summary>Asked for a player who is casting when a control lands: true keeps the cast (Phen card: "Control effects cannot interrupt casting").</summary>
+    public Func<GameSession, bool>? CastIgnoresControl { get; set; }
+
+    /// <summary>A control (Stun, Sleep, Frozen, Petrify, Knock-up) from another source breaks the chant the player is in. (inferred: the data names
+    /// the exceptions, the Phen card, not the rule)</summary>
+    private Task InterruptCastByControlAsync(GameSession s) =>
+        s.SkillCast == null || CastIgnoresControl?.Invoke(s) == true ? Task.CompletedTask
+            : CancelCastAsync(s, SkillInterruptedInfo.Types.SkillInterruptType.State);
 
     private async Task CancelCastAsync(GameSession s, SkillInterruptedInfo.Types.SkillInterruptType cause)
     {

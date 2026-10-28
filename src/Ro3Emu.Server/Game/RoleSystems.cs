@@ -153,6 +153,7 @@ public sealed class RoleSystems(Maps.World world, ChatService chat, CharacterSer
         await skills.SyncAsync(session); // after 5066: skill points need PlayerBasicInfo.career
         checkpoint();
         await buffs.InitializeEnergyAsync(session);
+        await buffs.RestoreOfflineAsync(session); // food and other buffs that keep counting down while away
         checkpoint();
         await worldCore.LoginAsync(session);
         checkpoint();
@@ -182,6 +183,7 @@ public sealed class RoleSystems(Maps.World world, ChatService chat, CharacterSer
     internal async Task LeaveAsync(GameSession session, Func<string, Func<Task>, Task> step, Action savePosition)
     {
         await step("scene", () => { scene.DisconnectLine(session); return Task.CompletedTask; });
+        await step("buffs", () => buffs.SaveOfflineAsync(session));
         await step("combat", () => combat.ClearSkillsAsync(session));
         await step("interaction", () => interaction.DisconnectAsync(session));
         await step("gathering", () => gathering.InterruptAsync(session, notify: false));

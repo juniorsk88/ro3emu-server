@@ -85,16 +85,16 @@ public sealed partial class BuffService
         else if (shield > 0) entity.Property.Add(new AoIProperty { Idx = 2003, Data = shield });
     }
 
-    /// <summary>Consume only live support shields before HP damage; nonpositive damage consumes nothing.</summary>
-    public async Task<long> AbsorbAsync(GameSession target, long damage)
+    /// <summary>Consume only live support shields before HP damage; nonpositive damage consumes nothing. Magic damage passes Kyrie Eleison's physical-only shield.</summary>
+    public async Task<long> AbsorbAsync(GameSession target, long damage, bool magic = false)
     {
         if (damage <= 0) return 0;
         if (target.Role == null) return damage;
         foreach (var expired in target.Buffs.Where(b => b.ShieldRemaining > 0 && b.ExpireMs <= MonsterService.NowMs).ToArray())
             await RemoveAsync(target, expired);
         // (inferred) Older buffs absorb first. BuffConfig does not identify an order for independent shields.
-        foreach (var buff in target.Buffs.Where(b => b.ShieldRemaining > 0 && b.ExpireMs > MonsterService.NowMs)
-                     .OrderBy(b => b.Guid).ToArray())
+        foreach (var buff in target.Buffs.Where(b => b.ShieldRemaining > 0 && b.ExpireMs > MonsterService.NowMs
+                     && !(magic && b.ConfigId / 100 == CombatService.KyrieEleisonGroup)).OrderBy(b => b.Guid).ToArray())
         {
             long absorbed = Math.Min(damage, buff.ShieldRemaining);
             damage -= absorbed;

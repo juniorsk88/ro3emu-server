@@ -82,6 +82,7 @@ public sealed partial class CombatService
                 {
                     foreach (var handler in PvpDealt) handler(source, target, effective, hp == 0);
                     foreach (var handler in PvpDealtAsync) await handler(source, target, effective, hp == 0);
+                    foreach (var handler in PvpHitTaken) await handler(source, target, row, effective);
                 }
                 var hit = new SkillHitInfo
                 {
@@ -148,17 +149,34 @@ public sealed partial class CombatService
         if (current()) await GuardianPlayerDamageReactionAsync(source, target, row, effective, current);
     }
 
+    /// <summary>The attacker's damage attributes and the victim's reductions on a player-versus-player hit: the same buckets as against monsters,
+    /// with DMG vs All Job 233 / its Reduction 234 (the 1330 / 1331 buff twins are folded into them by the stat sheet) instead of the PvE 231 / 232.</summary>
+    private long PvpAttributeDamage(GameSession source, GameSession target, JsonElement row, DamageHitResult result, long damage, StatSheet attack, StatSheet defend)
+    {
+        if (!options.Value.DamageBonusAttributes || damage <= 0) return damage;
+        bool magic = Ro3Emu.Server.Data.GameData.Int(row, "_iDmgType") == 2, ranged = Ro3Emu.Server.Data.GameData.Int(row, "_iDistanceType") == 2, critical = result == DamageHitResult.Critical;
+        int element = Ro3Emu.Server.Data.GameData.Int(row, "_iEleType") is > 1 and var e ? (int)e : 1;
+        damage = ApplyDamageBonuses(damage, magic, ranged, Ro3Emu.Server.Data.GameData.Int(row, "_iIsNormalAtk") == 1, critical, id => attack[id], null, element, pvp: true);
+        foreach (var negate in IncomingHitNegators) if (negate(target, magic)) return 0;
+        return ApplyDamageReductions(damage, magic, ranged, critical, id => defend[id], null, element, pvp: true);
+    }
+
     /// <summary>One player's damage from another's skill: the hit with a guardian's crit rules, the guardian factors and
     /// the restraints; a guardian's fixed hit replaces the amount.</summary>
     private (long Damage, DamageHitResult Result) PlayerHitDamage(GameSession source, GameSession target, JsonElement row)
     {
         var attack = _character.Stats(source); var defend = _character.Stats(target);
         var a = new Fighter(attack[AttributeId.Atk], attack[AttributeId.Matk], attack[AttributeId.Hit], attack[AttributeId.Cri],
-            source.Progress!.Level, 1);
-        var b = new Fighter(0, 0, 0, 0, target.Progress!.Level, 1)
-        { Def = defend[AttributeId.Def], Mdef = defend[AttributeId.Mdef], Flee = defend[AttributeId.Flee], ResCri = defend[AttributeId.ResCri] };
+            source.Progress!.Level, 1)
+        {
+            CritBonus = attack[200] + attack[237], EleIgnore = attack[235],
+            PenDef = attack[217], PenDefPct = attack[218], PenMdef = attack[219], PenMdefPct = attack[220],
+        };
+        var b = new Fighter(0, 0, 0, 0, target.Progress!.Level, ArmorElement(target))
+        { Def = defend[AttributeId.Def], Mdef = defend[AttributeId.Mdef], Flee = defend[AttributeId.Flee], ResCri = defend[AttributeId.ResCri], CritReduce = defend[238], EleResist = defend[236] };
         var (damage, result) = Damage(a, b, row, bonusCrit: GuardianPetRules.CriticalChance(row),
             forceCrit: GuardianPetRules.CriticalAtHp(row, defend[AttributeId.Hp], defend[AttributeId.MaxHp]));
+        damage = PvpAttributeDamage(source, target, row, result, damage, attack, defend);
         damage = GuardianPetRules.DirectDamage(row, damage);
         damage = GuardianOutgoingDamage(source, row, damage);
         damage = GuardianControlledDamage(source, GuardianControlTarget(target), damage);

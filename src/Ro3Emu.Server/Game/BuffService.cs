@@ -39,8 +39,12 @@ public sealed partial class BuffService : IGameTicker
     /// <summary>Subscribers publish effective unit stats after a timed attribute buff changes.</summary>
     public List<Func<WorldUnit, Task>> UnitChanged { get; } = new();
 
-    public BuffService(GameData data, World world, SessionRegistry sessions, CharacterService character, GameLoop loop, ILogger<BuffService> log)
+    private readonly Microsoft.Extensions.Options.IOptions<ServerOptions> _options;
+
+    public BuffService(GameData data, World world, SessionRegistry sessions, CharacterService character, GameLoop loop, ILogger<BuffService> log,
+        Microsoft.Extensions.Options.IOptions<ServerOptions> options)
     {
+        this._options = options;
         this._data = data;
         this._world = world;
         this._sessions = sessions;
@@ -87,6 +91,12 @@ public sealed partial class BuffService : IGameTicker
         _ => 0,
     };
 
+    /// <summary>A control state (Stun, Sleep, Frozen, Petrify, Knock-up) from another source landed on a player: a running cast breaks.</summary>
+    public Func<GameSession, Task>? ControlApplied { get; set; }
+
+    /// <summary>Asked before a buff from another source is placed on a player: true refuses it (card status immunities, Endure).</summary>
+    public Func<GameSession, int, bool>? Refuses { get; set; }
+
     /// <summary>Place or refresh a validated buff. Zero-time source rows retain the previous 60s fallback (inferred).</summary>
     public Task AddAsync(GameSession p, int configId, int durationMs, long sourceId) =>
         AddCoreAsync(p, configId, durationMs, sourceId, null);
@@ -111,12 +121,16 @@ public sealed partial class BuffService : IGameTicker
         double attributeMultiplier = 1)
     {
         if (p.Role == null || _data.Row("BuffConfig", configId) is not { } row || GameData.Int(row, "_iBuffID") <= 0) return;
+        // A hostile buff (BuffConfig._iType 2: Stun, Frozen, Slow, ...) acts like the guardians': it carries its control state, breaks on a hit
+        // and changes the combat attributes, whatever skill applied it. (inferred: the data gives these rules per group, not per source)
+        guardianOwned |= GameData.Int(row, "_iType") == NegativeBuffType;
         if (await RejectIncomingAsync(p, row, guardianOwned, sourceId)) return;
         if (durationMs <= 0) durationMs = (int)GameData.Int(row, "_iTime");
         if (durationMs <= 0) durationMs = 60000;
         if (sourceId != p.Role.Id && !ApplyDecay(p.Role.Id, p.SceneEntry, configId, ref durationMs)) return;
         long now = MonsterService.NowMs;
         int group = (int)GameData.Int(row, "_iBuffID");
+        if (sourceId != p.Role.Id && Refuses?.Invoke(p, group) == true) return;
         bool multiSource = GameData.Int(row, "_iMultiSource") != 0;
         var existing = p.Buffs.FirstOrDefault(b => !b.IsPassive && !b.IsTotemOwned && _data.Row("BuffConfig", b.ConfigId) is { } old
             && GameData.Int(old, "_iBuffID") == group && (!multiSource || b.SourceId == sourceId));
@@ -144,6 +158,7 @@ public sealed partial class BuffService : IGameTicker
             EntityUuid = (ulong)p.Role.Id, BuffInfo = new AoIBuffInfo { AddBuffs = { info } },
         });
         if (existing?.StateOrdinal != buff.StateOrdinal || buff.StateOrdinal != 0) await RefreshControlAsync(p);
+        if (buff.StateOrdinal is 3 or 11 or 12 or 18 or 19 && sourceId != p.Role.Id && ControlApplied != null) await ControlApplied(p);
         if (guardianOwned && group == BlindGroup) await PublishBlindAsync(p);
         if (buff.Changes.Count > 0 || existing?.Changes.Count > 0 || buff.ShieldRemaining > 0 || existing?.ShieldRemaining > 0)
             await _character.RefreshStatsAsync(p);
@@ -230,6 +245,7 @@ public sealed partial class BuffService : IGameTicker
         double attributeMultiplier = 1, bool guardianOwned = false)
     {
         if (_data.Row("BuffConfig", configId) is not { } row || GameData.Int(row, "_iBuffID") <= 0) return;
+        guardianOwned |= GameData.Int(row, "_iType") == NegativeBuffType; // see AddCoreAsync
         if (_unitBuffs.TryGetValue(unit.Uid, out var live) && ImmuneTo(live, row, guardianOwned)) return;
         if (live != null && sourceId != unit.Uid && UnitResistsControl(live, row))
         {

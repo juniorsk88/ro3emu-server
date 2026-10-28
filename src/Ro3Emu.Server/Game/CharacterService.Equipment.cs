@@ -131,6 +131,27 @@ public sealed partial class CharacterService
     private JsonElement? EquipRow(int entry) =>
         data.Row("ItemConfig", entry) is { } row && GameData.Int(row, "_iEquipId") is var equipId and > 0 ? data.Row("EquipConfig", equipId) : null;
 
+    /// <summary>
+    /// The level (ItemConfig._iLevelNeed) and career (_kJobNeed) an equipment piece asks for. The list names the first-job lines
+    /// (1100, 1200 ...) or exact jobs, so the player's career and its parents (JobConfig._iParentId) are all tried. The refusal
+    /// codes are the item-use ones (ErrLevelNeed 172, ErrJobNeed 173). (inferred: the client's equip UI gives no separate codes)
+    /// </summary>
+    private int EquipRequirementError(GameSession session, JsonElement row)
+    {
+        var p = session.Progress;
+        if (p == null) return 0;
+        if (p.Level < GameData.Int(row, "_iLevelNeed")) return ErrLevelNeed;
+        var jobs = Numbers(row, "_kJobNeed");
+        if (jobs.Length == 0 || jobs.Contains(0)) return 0;
+        long career = p.Career;
+        for (int depth = 0; career > 0 && depth < 8; depth++)
+        {
+            if (jobs.Contains(career)) return 0;
+            career = data.Row("JobConfig", career) is { } job ? GameData.Int(job, "_iParentId") : 0;
+        }
+        return ErrJobNeed;
+    }
+
     /// <summary>EquipPosType (ItemConfig._iEquipPart) -> the grids it may go to (spec §4.2).</summary>
     private static int[] GridsFor(int part) => part switch
     {
@@ -170,7 +191,9 @@ public sealed partial class CharacterService
         {
             int part = (int)GameData.Int(row, "_iEquipPart");
             var grids = GridsFor(part);
-            if (grids.Length > 0)
+            int need = options.Value.EquipRequirements ? EquipRequirementError(session, row) : 0;
+            if (need != 0) result = need;
+            else if (grids.Length > 0)
             {
                 if (!grids.Contains(grid)) grid = grids.FirstOrDefault(g => staged.Where(i => i.Grid > 0 && i.Pack == 2 && i.Grid <= 8).All(e => e.Grid != g), grids[0]);
                 // What leaves: the item in that grid; a two-hander also clears the off hand, and an off-hand item a two-hander.
