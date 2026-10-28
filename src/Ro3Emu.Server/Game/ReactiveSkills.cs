@@ -10,12 +10,12 @@ namespace Ro3Emu.Server.Game;
 /// <summary>
 /// Skills whose buff answers the hits a monster lands on the player: Shield Reflect, Reflect Damage, Parry, Recoil and the Auto Counter
 /// that ends its parry. Each buff names its triggered skill in BuffConfig._kLogicData (a SkillConfig group, level = the buff row's last two
-/// digits); the casting skill's _kDescData holds the numbers. Not done: Death Bound (it answers enemy players only), Devotion and King's Grace
+/// digits); the casting skill's _kDescData holds the numbers. Death Bound answers enemy players only. Not done: Devotion and King's Grace
 /// (they redirect damage between players). The monster's normal attack stands for every hit it lands (melee Physical when its normal skill is).
 /// </summary>
 public sealed class ReactiveSkills
 {
-    private const string ShieldReflect = "SReflect", ReflectDamage = "RDamage", Parry = "Counter_Attack2", Recoil = "ShrinkReflect", AutoCounter = "Counter_Attack";
+    private const string DeathBound = "DeathBound2", ShieldReflect = "SReflect", ReflectDamage = "RDamage", Parry = "Counter_Attack2", Recoil = "ShrinkReflect", AutoCounter = "Counter_Attack";
     private const int AutoGuardGroup = 11403, AutoCounterGroup = 11105;
 
     private readonly GameData _data;
@@ -37,6 +37,7 @@ public sealed class ReactiveSkills
         _loop = loop;
         combat.TakenAsync.Add(OnTakenAsync);
         combat.CastLanded.Add(OnCastAsync);
+        combat.PvpHitTaken.Add(OnPvpHitTakenAsync);
     }
 
     private bool Ready(GameSession s, long key, double seconds)
@@ -103,6 +104,29 @@ public sealed class ReactiveSkills
                     await _combat.StunMonsterAsync(monster, subRow.Row, player.Role.Id);
                     break;
             }
+        }
+    }
+
+    /// <summary>Death Bound: "taking melee damage from an enemy player reflects the damage to nearby enemies, dealing @{3}% of the damage taken to up to
+    /// @{2} enemies within a @{1}-meter radius. Built-in Cooldown: @{4} seconds." (the buff's _kDescData [radius, count, percent, cooldown]). The
+    /// attacker is hit like one of them and is never killed by it; monsters around the defender take the rest. (inferred)</summary>
+    private async Task OnPvpHitTakenAsync(GameSession attacker, GameSession defender, JsonElement row, long damage)
+    {
+        if (damage <= 0 || defender.Role == null || GameData.Int(row, "_iDistanceType") == 2 || GameData.Int(row, "_iDmgType") == 2) return;
+        long now = MonsterService.NowMs;
+        foreach (var buff in defender.Buffs.Where(b => b.ExpireMs > now).ToArray())
+        {
+            if (BuffConfig.Get(_data, buff.ConfigId) is not { LogicData: [var sub, ..] } config
+                || SkillConfig.Get(_data, sub * 100 + buff.ConfigId % 100)?.ScriptLogic != DeathBound || config.DescData.Length < 4) continue;
+            double radius = Part(config.DescData, 0), percent = Part(config.DescData, 2);
+            int count = (int)Part(config.DescData, 1);
+            if (!Ready(defender, sub, Part(config.DescData, 3))) continue;
+            long amount = (long)Math.Floor(damage * percent / 100);
+            if (amount <= 0) continue;
+            await _combat.ReflectToPlayerAsync(attacker, defender, amount);
+            foreach (var near in _combat.MonstersNear(defender, (float)Math.Max(1, radius), Math.Max(0, count - 1)))
+                await _combat.HitMonsterAsync(defender, near, amount, 0);
+            return;
         }
     }
 

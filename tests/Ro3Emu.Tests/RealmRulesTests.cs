@@ -123,4 +123,33 @@ public sealed class RealmRulesTests : IAsyncLifetime
             Assert.Single(s.Buffs, b => b.ConfigId == Food);
         });
     }
+
+    [ClientDataFact]
+    public void PartyKillMountBossAndTerritoryTargetsHaveReaders()
+    {
+        var tasks = Service<TaskService>();
+        // 107005 / 106012 kills with a party, 101021 the ridden mount, 210004 a dungeon boss, 106609 territory points.
+        foreach (long id in new long[] { 1904000, 1901000, 302091, 9000001, 120006 })
+            Assert.True(tasks.TargetsSupported(id), $"quest {id} has no reader");
+    }
+
+    [ClientDataFact]
+    public async Task ACrusaderCarriesPartOfAnAlliesHitUnderDevotionOrKingsGrace()
+    {
+        await using var crusaderBot = await InWorld("Crusader");
+        await using var allyBot = await InWorld("Friend");
+        var combat = Service<CombatService>();
+        var buffs = Service<BuffService>();
+        await Service<GameLoop>().InvokeAsync(async () =>
+        {
+            var crusader = Session(crusaderBot); var ally = Session(allyBot);
+            Assert.Equal(1000, combat.ShareDamage(ally, 1000)); // nothing active
+            await buffs.AddAsync(ally, 1150401, 5000, crusader.Role!.Id); // Devotion: "you take ${2}% (12) of the damage they receive"
+            Assert.Equal(880, combat.ShareDamage(ally, 1000));
+            foreach (var buff in ally.Buffs.Where(b => b.ConfigId == 1150401).ToArray()) await buffs.RemoveAsync(ally, buff);
+            await buffs.AddAsync(crusader, 1161401, 5000, crusader.Role.Id); // King's Grace: "redirecting ${1}% (50) of the DMG taken by allies within ${7} m"
+            Assert.Equal(500, combat.ShareDamage(ally, 1000));
+            Assert.Equal(1000, combat.ShareDamage(crusader, 1000)); // not for the Crusader itself
+        });
+    }
 }

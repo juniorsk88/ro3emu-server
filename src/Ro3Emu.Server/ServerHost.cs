@@ -230,6 +230,7 @@ public static class ServerHost
         app.Services.GetRequiredService<Diagnostics.ServerMetrics>().Owners = app.Services.GetRequiredService<Game.Ownership.OwnerRegistry>();
         // Mount energy meters (EnergyConfig._iBelongMount): BuffService cannot take MountService (MountService -> SceneService -> BuffService).
         app.Services.GetRequiredService<MountService>().Changed.Add(app.Services.GetRequiredService<BuffService>().MountsChangedAsync);
+        app.Services.GetRequiredService<MountService>().Changed.Add(app.Services.GetRequiredService<TaskService>().OnMountChangedAsync); // 101021 riding objectives
         // A cast gets the role off its mount first (CombatService does not know MountService: MountService -> SceneService -> BuffService -> CombatService).
         app.Services.GetRequiredService<CombatService>().SkillNoCancel = app.Services.GetRequiredService<IOptions<ServerOptions>>().Value.SkillNoCancel;
         app.Services.GetRequiredService<CombatService>().BeforeCast.Add(app.Services.GetRequiredService<MountService>().DismountForCastAsync);

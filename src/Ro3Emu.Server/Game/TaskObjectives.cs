@@ -153,6 +153,23 @@ public sealed partial class TaskService
     // those are supported: this server has no Tavern, so the Tavern quest stays without a producer.
     private const int TBarroomActTime = 106010;
 
+    // 101021 NowMount [101021, 2, mount id] ("Ride the Lion mount", the Mount Riding quests 302091...): the mount ridden now, read as a state
+    // like the other Check* targets (p2 is 2 in all twelve rows; inferred). 107005 / 106012 [type, 1, NPC id] ("Connect Quest - Defeat a Gold Thief Bug
+    // with a Party", "... the MVP Angeling with a Party"): one kill of that NPC by a party, i.e. the killer and at least one more member sharing it
+    // (inferred: the rows carry no party size).
+    private const int TNowMount = 101021, TKillParty = 107005, TKillMvpParty = 106012;
+
+    // 106609 [n] "Reach @{1} points in Guild Territory War": the personal siege scores add up (inferred: R is the number shown). 210004 [boss NPC id, n]
+    // (the Temple of Melody story steps, CheckDungeonKillBossId): that boss killed inside a dungeon instance, by the killer or a role sharing the kill.
+    private const int TTerritoryPoints = 106609, TDungeonBoss = 210004;
+
+    /// <summary>A mount change re-reads the riding objectives.</summary>
+    internal Task OnMountChangedAsync(GameSession s)
+    {
+        QueueRefresh(s);
+        return Task.CompletedTask;
+    }
+
     private readonly ConditionalWeakTable<MonsterUnit, HashSet<long>> _participants = new();
     private readonly HashSet<GameSession> _refreshQueued = new();
 
@@ -171,7 +188,10 @@ public sealed partial class TaskService
     {
         [TDialog, _, _, _] or [TArea, _, _] or [TJobChange, _] or [TTaskDone, _] or [TJobRank, _] or [TAreaAction, _, _, _]
             or [TGuide, _] or [TPydDownload, 1] or [TRentCareerSpecial, _] or [TValhallaLayer, _] or [TPetCamp, 0]
-            or [TJoinGuild, 1] => 1,
+            or [TJoinGuild, 1] or [TNowMount, _, _] => 1,
+        [TKillParty or TKillMvpParty, var n, _] => n,
+        [TTerritoryPoints, var n] => n,
+        [TDungeonBoss, _, var n] => n,
         [TPlot or TBaseLevel or TSkillPoints or TStatPoints or TResonance or TTotalRefine or TRefineSlots
             or TRefineCount or TMvp or TMvpOnce or TCargo or TAfkSeconds or TTimedBattle or TCaravan
             or TTalentLevels or TPetsDeployed or TTowerFloor or TGuildHunt or TDraculaWedding or TPetSupport
@@ -224,6 +244,9 @@ public sealed partial class TaskService
             TDungeonPass => _data.Row("DungeonConfig", t[1]) != null,
             TAreaAction => _data.Row("MapConfig", t[1]) != null && t[2] > 0 && _data.Row("PerformanceConfig", t[3]) != null,
             TKill or TKillInvolved => t[1..^1].All(npc => _data.Row("NPCConfig", npc) != null),
+            TNowMount => t[2] > 0,
+            TDungeonBoss => _data.Row("NPCConfig", t[1]) != null,
+            TKillParty or TKillMvpParty => _data.Row("NPCConfig", t[2]) != null,
             TJobRank => t[1] > 0,
             TJobChange => _data.Row("JobConfig", t[1]) != null,
             TTaskDone => Defs().ContainsKey(t[1]),
@@ -306,6 +329,7 @@ public sealed partial class TaskService
                 ? GameData.Int(floor, "_iFloor") : 0,
             TStrength => s.EquipLevels.Strength.GetValueOrDefault((int)t[1]),
             TRentCareerSpecial => CareerSpecialService.HoldsSubType(s, _data, t[1]) ? 1 : 0,
+            TNowMount => MountService.Rider(s) == t[2] ? 1 : 0,
             TValhallaLayer => DungeonService.ValhallaCleared(s.Dungeons).Contains(t[1]) ? 1 : 0,
             TMonsterHunt => MonsterHuntService.AreaProgress(s, t[1]),
             // Pets load after the quests at login (RoleSystems): keep the stored value until the post-login refresh.
@@ -435,6 +459,10 @@ public sealed partial class TaskService
                     {
                         TKill => (ReferenceEquals(session, killer) || party.Contains(role)) && target.Length >= 3 && target[1..^1].Contains(monster.Template.NpcId),
                         TKillInvolved => target.Length >= 3 && target[1..^1].Contains(monster.Template.NpcId),
+                        TDungeonBoss => (ReferenceEquals(session, killer) || party.Contains(role)) && monster.InstanceId != 0
+                            && target.Length == 3 && target[1] == monster.Template.NpcId,
+                        TKillParty or TKillMvpParty => (ReferenceEquals(session, killer) || party.Contains(role)) && party.Count >= 2
+                            && target.Length == 3 && target[2] == monster.Template.NpcId,
                         TMapKill => target.Length == 3 && target[1] == monster.SceneEntry,
                         TKillOnMap => (ReferenceEquals(session, killer) || party.Contains(role)) && target.Length == 3 && target[2] == monster.SceneEntry,
                         _ => false
@@ -506,6 +534,8 @@ public sealed partial class TaskService
             {
                 TKill when (s == killer || party.Contains(s.Role!.Id)) && t.Length >= 3 && t[1..^1].Contains(monster.Template.NpcId) => 1,
                 TKillInvolved when t.Length >= 3 && t[1..^1].Contains(monster.Template.NpcId) => 1,
+                TDungeonBoss when (s == killer || party.Contains(s.Role!.Id)) && monster.InstanceId != 0 && t.Length == 3 && t[1] == monster.Template.NpcId => 1,
+                TKillParty or TKillMvpParty when (s == killer || party.Contains(s.Role!.Id)) && party.Count >= 2 && t.Length == 3 && t[2] == monster.Template.NpcId => 1,
                 TMapKill when t.Length == 3 && t[1] == monster.SceneEntry => 1,
                 TKillOnMap when (s == killer || party.Contains(s.Role!.Id)) && t.Length == 3 && t[2] == monster.SceneEntry => 1,
                 _ => 0,

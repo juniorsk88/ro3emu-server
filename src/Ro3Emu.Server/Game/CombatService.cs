@@ -603,6 +603,7 @@ public sealed partial class CombatService : IGameTicker
         damage = ApplyPetSupportResistance(damage, target.Buffs.Where(b => b.ExpireMs > Now
                 && (b.SourceId is >= TowerPetUnit.UidBase and < TowerPetUnit.UidLimit || b.IsGuardianOwned))
             .SelectMany(b => b.Changes).Select(c => (c.Attr, c.Value)), row, sourceElement);
+        damage = ShareDamage(target, damage); // Devotion and King's Grace: a Crusader carries part of it
         long beforeShield = damage;
         damage = await _buffs.AbsorbAsync(target, damage, row is { } hit && GameData.Int(hit, "_iDmgType") == 2);
         long shieldDamage = beforeShield - damage;

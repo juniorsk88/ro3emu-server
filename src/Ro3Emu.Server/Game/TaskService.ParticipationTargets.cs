@@ -94,6 +94,7 @@ public sealed partial class TaskService
         _loop.PostOwned(session, () => ProgressAsync(session, null, t => t switch
         {
             [TSiegeScore, var points, _] when score >= points => 1,
+            [TTerritoryPoints, _] => score,
             [TGvgJoin, _] => 1,
             [TGvgWin, _] when won => 1,
             _ => 0,

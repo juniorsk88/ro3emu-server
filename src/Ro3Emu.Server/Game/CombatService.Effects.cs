@@ -22,6 +22,9 @@ public sealed class SkillObject : WorldUnit
     public bool Busy { get; set; }
     public bool Removing { get; set; }
     public int Charges { get; set; }
+    /// <summary>Enemy touches that end the field early (Fire Wall: "disappear early after being touched by enemies ${7} times"); 0: no limit.</summary>
+    public int TouchLimit { get; init; }
+    public int Touches { get; set; }
     public int ProtectionDistanceType { get; init; }
     public HashSet<int> Skills { get; } = new();
 
@@ -277,6 +280,7 @@ public sealed partial class CombatService
                         await _buffs.RemoveAsync(recipient, buff);
                 }
             }
+            if (field != null && field.TouchLimit > 0) field.Touches += hit.Dsts.Count(d => d.DamageType != DamageType.Heal && d.HitResult != DamageHitResult.Miss);
             if (hit.Dsts.Count > 0)
             {
                 foreach (var result in hit.Dsts)
@@ -757,6 +761,7 @@ public sealed partial class CombatService
             X = point.X, Y = point.Y, Z = point.Z, Face = action.Request.Face, ExpiresMs = Now + Math.Max(1, duration),
             IntervalMs = Math.Max(50, interval), NextTickMs = Now, Radius = radius, Trap = trap,
             ProtectionDistanceType = protection, Charges = charges,
+            TouchLimit = script == "Fire_Wall" && Numbers(row, "_kDescData") is { Length: > 6 } wallDesc ? (int)wallDesc[6] : 0,
         };
         foreach (int skill in Numbers(npcRow, "_kSkills").Select(v => (int)v)) unit.Skills.Add(skill);
         s.SkillObjects.Add(unit);
@@ -798,7 +803,7 @@ public sealed partial class CombatService
             if (unit.ProtectionDistanceType != 0) return;
             if (unit.Trap && !_world.Map(unit.WorldScene).Near(unit.X, unit.Z, 1.5f).OfType<MonsterUnit>().Any(m => !m.Dead && Distance(m.Pos, unit.Pos) <= 1.5f)) return;
             await ApplyEffectsAsync(owner, unit.Cast, unit.Pos, unit);
-            if (unit.Trap) await RemoveSkillObjectAsync(unit);
+            if (unit.Trap || unit.TouchLimit > 0 && unit.Touches >= unit.TouchLimit) await RemoveSkillObjectAsync(unit);
         }
         finally { unit.Busy = false; }
     }
