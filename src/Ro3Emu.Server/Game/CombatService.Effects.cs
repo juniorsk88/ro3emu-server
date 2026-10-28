@@ -493,9 +493,6 @@ public sealed partial class CombatService
             ["WolvesDash"] = (DisplaceKind.CasterForward, 0, 0),
             ["HighspeedSlide"] = (DisplaceKind.CasterForward, 0, 0),
             ["HighspeedSlideMecha"] = (DisplaceKind.CasterForward, 0, 0),
-            ["DarkIllusion"] = (DisplaceKind.CasterForward, 1, 0),        // Shadow Step: "quickly dash ${2} meters toward the target"
-            ["yingliu"] = (DisplaceKind.CasterForward, 0, 0),             // Flowing Shadow: "dash ${1} meters as a phantom"
-            ["yingliuS1"] = (DisplaceKind.CasterForward, 0, 0),
             ["PinpointAttack"] = (DisplaceKind.CasterForward, 3, 0),
             ["ArrowRepel"] = (DisplaceKind.TargetPush, 3, 0),
             ["PileBunker"] = (DisplaceKind.TargetPush, 5, 0),

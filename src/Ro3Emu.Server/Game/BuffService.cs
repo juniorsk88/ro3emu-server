@@ -245,8 +245,9 @@ public sealed partial class BuffService : IGameTicker
         double attributeMultiplier = 1, bool guardianOwned = false)
     {
         if (_data.Row("BuffConfig", configId) is not { } row || GameData.Int(row, "_iBuffID") <= 0) return;
+        bool fromGuardian = guardianOwned; // immunities keep their guardian-only scope; the control resist below covers every source
         guardianOwned |= GameData.Int(row, "_iType") == NegativeBuffType; // see AddCoreAsync
-        if (_unitBuffs.TryGetValue(unit.Uid, out var live) && ImmuneTo(live, row, guardianOwned)) return;
+        if (_unitBuffs.TryGetValue(unit.Uid, out var live) && ImmuneTo(live, row, fromGuardian)) return;
         if (live != null && sourceId != unit.Uid && UnitResistsControl(live, row))
         {
             foreach (var handler in ControlResisted) await handler(unit, sourceId, row);
