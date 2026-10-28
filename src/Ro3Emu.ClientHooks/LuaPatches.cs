@@ -113,6 +113,7 @@ namespace Ro3Emu.ClientHooks
                 if (param != null) param.Obf_luA<string, object>("RechargeExternalUrl", StoreUrl());
                 _doneEnv = env;
                 TradeWindow.Install(); // IMGUI trade / send / vault window; needs no Lua, and guards itself (once, kill switch)
+                HotbarKey.Install(); // F12 = next skill plan (hotbar); needs no Lua, and guards itself (once, kill switch)
                 PatchCountdowns(manager, global);
                 PatchPayInit(manager, global);
                 SoloDungeonEntry.Install(Module(manager, global, "ui_sys_dungeon_rightinfowidgetctrl"), Module(manager, global, "lc_dal_multiplayerdungeon"));

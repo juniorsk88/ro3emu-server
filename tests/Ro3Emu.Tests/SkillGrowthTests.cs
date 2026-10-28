@@ -285,6 +285,21 @@ public sealed class SkillGrowthTests : IAsyncLifetime
     }
 
     [ClientDataFact]
+    public async Task TheF12KeyMessageSwitchesToTheNextUnlockedPlan()
+    {
+        await using var alice = await InWorld("Alice");
+        await Next(alice, SkillService.SkillDataSync, DBSkillDataIncrement.Parser);
+        await Gm("alice", "!job 1100");
+        await Next(alice, SkillService.SkillDataSync, DBSkillDataIncrement.Parser, m => !m.SyncAllMark && m.CurrentAtkSkillId == 1100001);
+        await alice.SendGameBytesAsync(SkillService.NextPlanMsg, []);
+        var reply = await Next(alice, SkillService.SwitchPlan, SwitchPlanResp.Parser);
+        Assert.Equal(0, reply.Result);
+        Assert.Equal(1, reply.Plan); // plan 0 was the current one
+        var switched = await Next(alice, SkillService.SkillDataSync, DBSkillDataIncrement.Parser, m => !m.SyncAllMark && m.CurrentPlanIndex == 1);
+        Assert.Equal(1, switched.CurrentPlanIndex);
+    }
+
+    [ClientDataFact]
     public async Task LoadQueueAndResetValidateInputsAndPersist()
     {
         await using (var alice = await InWorld("Alice"))

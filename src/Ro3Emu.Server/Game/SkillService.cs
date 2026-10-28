@@ -19,6 +19,9 @@ public sealed class SkillService
     public const uint PlanUpdate = 31151;
     public const uint SkillLoad = 31153;
     public const uint SwitchPlan = 31152, RenamePlan = 31157, PlanNameChange = RenamePlan;
+
+    /// <summary>The client hook's F12 key (Ro3Emu.ClientHooks.HotbarKey, same id): switch to the next unlocked skill plan, which carries its own skill bar.</summary>
+    public const uint NextPlanMsg = 77018;
     public const uint SkillReset = 31156, QueueUpdate = 31159, SwitchGenre = 31160;
     private const int PlanCount = 5; // (inferred) PublicParamConfig.SchemeNum.
     private const int BarSlots = 6;
@@ -551,6 +554,22 @@ public sealed class SkillService
                 progress.SkillBar[slot] = skill.SkillId;
         state.CurrentPlanIndex = index;
         return 0;
+    }
+
+    /// <summary>F12: the next unlocked plan after the current one, wrapping round; nothing to do when no other plan is unlocked.</summary>
+    public async Task SwitchToNextPlanAsync(GameSession session)
+    {
+        if (session.SkillPlans is not { } plans) return;
+        int current = plans.CurrentPlanIndex;
+        for (int step = 1; step < PlanCount; step++)
+        {
+            int index = (current + step) % PlanCount;
+            if (index < plans.SkillAssignPlans.Count && plans.SkillAssignPlans[index].IsUnlock)
+            {
+                await SwitchPlanAsync(session, new SwitchPlanReq { Plan = index });
+                return;
+            }
+        }
     }
 
     public async Task SwitchPlanAsync(GameSession session, SwitchPlanReq req)

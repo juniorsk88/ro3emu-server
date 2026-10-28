@@ -20,7 +20,7 @@ public sealed class CharacterMessages(CharacterService character, SkillService s
         // An item whose use action changes a guild or Adventure Group record reserves it in its own item-use scope.
         routes.AdmitEconomic((session, id, body) => id == CharacterService.ItemUse && character.ItemUseWidens(session, body));
         // As Realm a cast waited behind every other player's work (31102 p99 1.4 s); NPC talk behind the market up to 3.4 s.
-        routes.AdmitRole(id => id is CombatService.UseSkill or CombatService.SkillInterrupt
+        routes.AdmitRole(id => id is CombatService.UseSkill or CombatService.SkillInterrupt or SkillService.NextPlanMsg
             or >= 31151 and <= 31160); // skill plans
         routes.AdmitRole(id => id is SceneService.NpcInteraction);
         routes.AdmitRole(id => id is >= 33501 and <= 33515); // life jobs
@@ -465,6 +465,10 @@ public sealed class CharacterMessages(CharacterService character, SkillService s
         routes.Map(CharacterService.ResetAttrPoints, "character", async (session, msgId, body) =>
         {
             await character.ResetStatsAsync(session, ResetAttrPointReq.Parser.ParseFrom(body.Span));
+        });
+        routes.Map(SkillService.NextPlanMsg, "skills", async (session, msgId, body) =>
+        {
+            await skills.SwitchToNextPlanAsync(session);
         });
         routes.Map(31152, "skills", async (session, msgId, body) =>
         {
