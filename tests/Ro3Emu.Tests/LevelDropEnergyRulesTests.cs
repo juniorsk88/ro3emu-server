@@ -243,4 +243,24 @@ public sealed class LevelDropEnergyRulesTests : IAsyncLifetime
         // Skill 3112301 costs [8,3112301,0,12]: the full starting meter pays it.
         Assert.True(Service<BuffService>().CanSpendEnergy(session, skill));
     }
+
+    // ---- 5. death penalty (operator rate; no client table names one) ----
+
+    [ClientDataFact]
+    public async Task ADeathPenaltyTakesAShareOfTheLevelsExpAndNeverALevel()
+    {
+        await using var bot = await InWorld("Mortal");
+        var session = Session(bot);
+        await Gm(bot, "!lvl 20");
+        long need = GameData.Int(Data.Row("BaseLvConfig", 20)!.Value, "_iBaseExp");
+        await Gm(bot, "!exp 1");
+        long before = session.Progress!.Exp;
+        long lost = 0;
+        await OnLoop(async () => lost = await Service<CharacterService>().LoseExpAsync(session, 0));
+        Assert.Equal((0L, before), (lost, session.Progress.Exp));
+        await OnLoop(async () => lost = await Service<CharacterService>().LoseExpAsync(session, 50));
+        Assert.Equal(before - Math.Max(0, before - need / 2), lost); // capped at what it has
+        Assert.Equal(before - lost, session.Progress.Exp);
+        Assert.Equal(20, session.Progress.Level);
+    }
 }

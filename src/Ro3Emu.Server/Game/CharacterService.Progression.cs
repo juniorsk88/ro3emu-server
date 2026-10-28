@@ -109,6 +109,21 @@ public sealed partial class CharacterService
         return $"Base {p.Level} ({p.Exp}/{BaseExpNeed(p.Level)}), job {p.JobLevel} ({p.JobExp}/{JobExpNeed(p.Career, p.JobLevel)}).";
     }
 
+    /// <summary>Takes <paramref name="percent"/> of the EXP the current level needs off the player's base EXP; the level never drops. Returns the EXP lost.</summary>
+    public async Task<long> LoseExpAsync(GameSession session, double percent)
+    {
+        if (percent <= 0 || session.Progress == null) return 0;
+        using var _ = await LockAsync(session);
+        var p = CloneProgress(session.Progress);
+        long lost = Math.Min(p.Exp, (long)Math.Floor(BaseExpNeed(p.Level) * percent / 100));
+        if (lost <= 0) return 0;
+        p.Exp -= lost;
+        await CommitCharacterAsync(session, "death-exp", progress: p);
+        await SyncAsync(session, RoleBaseInfoSync, BuildBaseInfo(session));
+        foreach (var handler in StateChanged) handler(session);
+        return lost;
+    }
+
     /// <summary>
     /// JobLvConfig rows needing 0 exp below the rank's max (first jobs: levels 1-14) are passed through, as the
     /// character window does (it shows job 5 of a Swordman as 0/2246, the need of level 15).

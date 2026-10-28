@@ -293,6 +293,16 @@ public sealed class ServerOptions
     /// </summary>
     public bool EquipRequirements { get; set; }
 
+    /// <summary>
+    /// Dying on a public map takes this percent of the base EXP the current level needs (never below 0, never a level). 0 = off, the default:
+    /// no client table names a death penalty (ReviveConfig covers dungeons only), so the rate is the operator's choice. (inferred)
+    /// Ro3Emu__DeathExpLossPercent=1.5
+    /// </summary>
+    public double DeathExpLossPercent { get; set; }
+
+    /// <summary>Map ids (SceneEntry) where the death EXP loss applies; empty = every public map. Ro3Emu__DeathExpLossMaps__0=1001</summary>
+    public List<long> DeathExpLossMaps { get; set; } = [];
+
     /// <summary>Diagnostics: logs, for every damaging player skill hit on a monster, the attacker's Matk/Atk, the monster's level, defences and element and the damage before/after rolls. Ro3Emu__DamageTrace=true.</summary>
     public bool DamageTrace { get; set; }
 

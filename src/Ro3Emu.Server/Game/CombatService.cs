@@ -791,9 +791,15 @@ public sealed partial class CombatService : IGameTicker
                     BDead = true, ReviveTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 30, SceneEntry = p.SceneEntry,
                 });
             foreach (var handler in PlayerDied) await handler(p);
+            if (DeathLosesExp(p)) _loop.PostRuntime(() => _character.LoseExpAsync(p, options.Value.DeathExpLossPercent), "death exp loss");
         }
         finally { if (ownsPublication) ReleaseDeathPublication(p); }
     }
+
+    /// <summary>The EXP penalty (ServerOptions.DeathExpLossPercent) applies to deaths on public maps that no dungeon, battle or match owns.</summary>
+    private bool DeathLosesExp(GameSession p) =>
+        options.Value.DeathExpLossPercent > 0 && p.Role != null && p.InstanceId == 0 && !ReviveInfoOwners.Any(owns => owns(p))
+        && (options.Value.DeathExpLossMaps.Count == 0 || options.Value.DeathExpLossMaps.Contains(p.SceneEntry));
 
     /// <summary>
     /// Damage without an attacker (the Survivor Battle poison zone, inferred): the same protected HP transition as a
