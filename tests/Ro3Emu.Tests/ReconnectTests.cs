@@ -98,6 +98,19 @@ public sealed class ReconnectTests : IAsyncLifetime
 
     private static AoIViewChangeData View(BotEvent e) => AoIViewChangeData.Parser.ParseFrom(e.Body);
 
+    /// <summary>The HUD ping: the client times the Pong that returns the tag it put in its Ping; without it the HUD shows 0 ms.</summary>
+    [Fact]
+    public async Task HeartbeatPongReturnsThePingTag()
+    {
+        await StartAsync(gameData: true);
+        await using var alice = await InWorldAsync("Alice");
+        var pong = await alice.HeartbeatAsync("ro3pt:000000000000002a|client tag");
+        Assert.Equal("ro3pt:000000000000002a|client tag", pong.StrDebugTag);
+        Assert.NotEqual(0UL, pong.ServerTimeMs);
+        Assert.Equal("", (await alice.HeartbeatAsync("")).StrDebugTag);     // an empty Ping (the bots') still gets its Pong
+        await alice.HeartbeatAsync();
+    }
+
     [Fact]
     public async Task GracefulDropReconnectsTheSameSessionWithoutLogout()
     {

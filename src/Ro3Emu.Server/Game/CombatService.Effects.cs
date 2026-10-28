@@ -66,6 +66,14 @@ public sealed partial class CombatService
         // SkillConfig._bMovement is enum_SkillLockMoveType (may the caster walk while casting), not a displacement.
         await MoveCasterAsync(s, action);
         if (!CurrentCastMap(s, action)) return;
+        // The client plays the cast timeline itself. Projectile skills that the timeline does not spawn get one
+        // SkillFixTimeBullet; the damage then waits for the flight so the numbers land with it.
+        int flight = await SendProjectileAsync(s, action, VisualOf(row));
+        if (flight > 0)
+        {
+            await Task.Delay(flight);
+            if (!CurrentCastMap(s, action)) return;
+        }
         await ApplyEffectsAsync(s, action, action.Request.TargetPos ?? action.Origin);
     }
 
@@ -129,7 +137,7 @@ public sealed partial class CombatService
                 .OrderBy(p => p.Distance).ThenBy(p => p.Id).Take(maxTargets).Select(p => p.Id).ToHashSet();
             targets.RemoveAll(m => !selected.Contains(m.Uid));
             await HitEventPlayersAsync(s, playerTargets.Where(p => selected.Contains(p.Role!.Id)).ToArray(),
-                row, action.Request.SkillId, HitEffect(GameData.Int(row, "_iScriptShow")), action.Id, CanApplyMoreEffects);
+                row, action.Request.SkillId, VisualOf(row).HitEffect, action.Id, CanApplyMoreEffects);
         }
         if (!CanApplyMoreEffects()) return; // player publication can yield before any monster hit is committed
         bool friendly = Relation(row, true, true) || Relation(row, true);
@@ -151,12 +159,13 @@ public sealed partial class CombatService
             }
         }
         var stats = character.Stats(s);
-        var attacker = new Fighter(stats[103], stats[104], stats[109], stats[111], s.Progress!.Level, 1);
+        var attacker = new Fighter(stats[103], stats[104], stats[109], stats[111], s.Progress!.Level, 1) { CritBonus = stats[200] + stats[237] };
         var hit = new SkillHitInfo
         {
             SrcID = field?.Uid ?? action.SourceId, SkillId = action.Request.SkillId, SessionId = action.Id,
-            RootCtxGuid = action.Id, ComboIndex = action.Request.ComboIndex, ShowPoint = HitEffect(GameData.Int(row, "_iScriptShow")),
+            RootCtxGuid = action.Id, ComboIndex = action.Request.ComboIndex, ShowPoint = VisualOf(row).HitEffect,
             SrcElement = (int)Math.Max(1, GameData.Int(row, "_iEleType")),
+            Split = HitSplit(row),
         };
         var killed = new List<MonsterUnit>();
         var processed = new List<MonsterUnit>();
@@ -173,6 +182,10 @@ public sealed partial class CombatService
                 var defender = new Fighter(0, 0, target.Template.Flee, 0, target.Template.Level, target.Template.Element)
                 { Def = target.Template.Def, Mdef = target.Template.Mdef, Flee = target.Template.Flee };
                 var (amount, result) = Damage(attacker, defender, row, script == "Heal" ? 1 : 0);
+                if (options.Value.DamageTrace && amount > 0)
+                    log.LogInformation("Damage {Role} skill {Skill} Matk {Matk} Atk {Atk} Lv {Lv} -> npc {Npc} Lv {TLv} Mdef {Mdef} Def {Def} ele {Ele}: raw {Raw} final {Amount}",
+                        s.Role!.Name, action.Request.SkillId, attacker.Matk, attacker.Atk, attacker.Level, target.Template.NpcId, defender.Level, defender.Mdef, defender.Def,
+                        target.Template.Element, (long)Math.Round(BaseDamage(attacker, defender, row, 0, out _)), amount);
                 if (amount > 0)
                 {
                     foreach (var modifier in DamageAdjusters) amount = Math.Max(0, modifier(s, target, row, result, amount));
@@ -221,16 +234,19 @@ public sealed partial class CombatService
                 long amount = (long)Math.Max(0, Math.Round(stats[104] * multiplier / 10000 + flat));
                 foreach (var modifier in ExtraHeal) amount = modifier(s, amount);
                 var before = character.Stats(recipient);
-                long actual = Math.Min(amount, Math.Max(0, before[101] - before[2000]));
-                await character.SetHpSpAsync(recipient, before[2000] + amount, null);
-                hit.Dsts.Add(new DamageInfo { DstID = recipient.Role!.Id, Damage = actual, DamageType = DamageType.Heal, DstElement = 1 });
+                bool healCrit = options.Value.DamageBonusAttributes && amount > 0 && Rolls.Crit() < HealCritChance(stats);
+                if (healCrit) amount = (long)Math.Round(amount * (1.5 + 0.5 * stats[209] / 10000d)); // FormulaParamCriDmg + FormulaParamHealCriC * Crit Damage%
+                long received = options.Value.DamageBonusAttributes ? ScaleHealing(amount, stats[207], before[208], stats[1207], before[1208]) : amount;
+                long actual = Math.Min(received, Math.Max(0, before[101] - before[2000]));
+                await character.SetHpSpAsync(recipient, before[2000] + received, null);
+                hit.Dsts.Add(new DamageInfo { DstID = recipient.Role!.Id, Damage = actual, DamageType = DamageType.Heal, DstElement = 1, HitResult = healCrit ? DamageHitResult.Critical : DamageHitResult.Normal });
                 foreach (var handler in Healed) handler(s, actual);
                 foreach (var handler in HealedAsync) await handler(s, actual);
             }
-            if (script is "Detoxify" or "HealingSkills")
+            if (script is "PoisonBoom" or "Cleanse") // the data names them Cleanse (Healing Skills) and PoisonBoom (Detoxify)
             {
                 // (inferred) cleanse exact described groups rather than removing every beneficial/hostile status.
-                int[] groups = script == "Detoxify" ? [9030] : [9023, 9025];
+                int[] groups = script == "PoisonBoom" ? [9030] : [9023, 9025];
                 foreach (var buff in recipient.Buffs.Where(b => data.Row("BuffConfig", b.ConfigId) is { } br && groups.Contains((int)GameData.Int(br, "_iBuffID"))).ToArray())
                     await buffs.RemoveAsync(recipient, buff);
             }
@@ -248,9 +264,42 @@ public sealed partial class CombatService
             }
             if (CurrentCaster() && hit.Dsts.Any(d => d.HitResult != DamageHitResult.Miss)) await buffs.RecoverEnergyOnHitAsync(s, row);
             var sourceViewers = CurrentCaster() ? world.Viewers(s).Append(s) : Enumerable.Empty<GameSession>();
-            foreach (var viewer in processed.SelectMany(t => t.Viewers).Concat(sourceViewers).Distinct()) await viewer.SendGameAsync(SkillHit, hit);
+            var viewers = processed.SelectMany(t => t.Viewers).Concat(sourceViewers).Distinct().ToList();
+            foreach (var viewer in viewers) await viewer.SendGameAsync(SkillHit, hit);
             if (CurrentCaster() && field?.Trap == true)
                 await ToPlayerAndViewersAsync(s, TrapDamage, new TrapDamageNtf { SkillConfigId = action.Request.SkillId, DamageValue = hit.Dsts.Sum(d => d.Damage), Pos = center.Clone() });
+        }
+        // A skill that only buffs, cleanses or debuffs has no damage entry above, so the client would play its cast and
+        // nothing else: Blessing's angel glow (fx_buff_angelblessing) and Increase AGI's swirl are the type-3 hit effect,
+        // which the client draws only for a SkillHit dst. DamageShare with a Normal result draws that effect and no number
+        // (LC_DamageHelper: the hud word type is None). Fields are skipped so a ticking zone does not replay it.
+        if (!damage && field == null && CurrentCaster() && VisualOf(row) is { HitHasGfx: true } shown)
+        {
+            var show = new SkillHitInfo
+            {
+                SrcID = action.SourceId, SkillId = action.Request.SkillId, SessionId = action.Id, RootCtxGuid = action.Id,
+                ComboIndex = action.Request.ComboIndex, ShowPoint = shown.HitEffect, Split = 1,
+                SrcElement = (int)Math.Max(1, GameData.Int(row, "_iEleType")),
+            };
+            var seers = new List<GameSession>();
+            if (friendly)
+                foreach (var recipient in allies)
+                {
+                    show.Dsts.Add(new DamageInfo { DstID = recipient.Role!.Id, DamageType = DamageType.DamageShare, DstElement = 1 });
+                    seers.Add(recipient);
+                    seers.AddRange(world.Viewers(recipient));
+                }
+            foreach (var target in processed.Where(t => !t.Dead && t.Hp > 0))
+            {
+                show.Dsts.Add(new DamageInfo { DstID = target.Uid, DamageType = DamageType.DamageShare, DstElement = target.Template.Element });
+                seers.AddRange(target.Viewers);
+            }
+            if (show.Dsts.Count > 0)
+            {
+                seers.Add(s);
+                seers.AddRange(world.Viewers(s));
+                foreach (var viewer in seers.Distinct()) await viewer.SendGameAsync(SkillHit, show);
+            }
         }
         foreach (var target in processed)
         {
@@ -433,6 +482,12 @@ public sealed partial class CombatService
         {
             case "Fire_Wall" or "Quagmire" or "Fire_Pillar" or "Meteor_Storm" or "Lord_of_Vermilion" or "Storm_Gust" when logic.Length >= 3:
                 npc = (int)logic[0]; interval = (int)logic[1]; duration = (int)logic[2]; break;
+            case "Magnus_Exorcismus" when logic.Length >= 2:
+                // Exorciser cross: _kLogicData [NPC, seconds it lasts, ...] and _kDescData[4] is the seconds between hits
+                // ("for the next 4 sec. ... every 0.5 sec."). Without this case the NPC (the cross on the floor) never spawned.
+                npc = (int)logic[0]; duration = (int)(logic[1] * 1000);
+                interval = Numbers(row, "_kDescData") is { Length: > 4 } desc && desc[4] > 0 ? (int)(desc[4] * 1000) : 500;
+                break;
             case "Safety_Wall" or "Pneuma" when logic.Length >= 8:
                 npc = (int)logic[5]; duration = (int)logic[2]; radius = (float)(logic[7] / 100);
                 protection = script == "Safety_Wall" ? 1 : 2; charges = script == "Safety_Wall" ? (int)logic[1] : int.MaxValue; break;

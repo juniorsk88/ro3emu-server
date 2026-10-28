@@ -56,6 +56,15 @@ Realm of the Gods extras (`DungeonService.RealmOfGods`, TenGameplayConfig 100101
   uniform), sends `RandomDungeonNotify` with the countdown `FiveGamePlay_RandomDuration`, then runs that boss with the
   Hidden Realm as `MultiDungeonInitData.origin`. The clear counts as the Hidden Realm's (its awards, allowance and
   record, inferred).
+- Solo entry (not original behaviour, off by default): the server switch `Ro3Emu:DungeonSolo` (`Ro3Emu__DungeonSolo=true`
+  in the systemd unit) lets every lone role enter a team boss with 30400 and match into it with 82681 without a team, the
+  same as the GM test aid below on every session. The boss keeps its team-sized stats. Needs a server restart to change.
+  Test: `DungeonMatchTests.ServerOptionLetsALoneRoleMatchIntoATeamBossWithoutTheGmTestAid`.
+- Solo strength (not original behaviour): `<data>/dungeon-solo.json` `{ "hpPercent": 50, "attackPercent": 50 }` (each 5 to 100, reread
+  once per second, no restart; no file = unchanged) weakens a team boss's HP and its attack and magic attack (not defence) when fewer
+  players than the plan's minimum fight it; the percentage grows linearly back to 100 at the minimum, so a pair meets a boss between
+  the solo and the full-team strength. Code: `DungeonSoloScale`, applied where `DungeonService` spawns the wave's monsters. Tests:
+  `DungeonSoloScaleTests`, `DungeonMatchTests.ALoneRoleMeetsTheTeamBossWithTheScaledStatsOfDungeonSoloJson`.
 - Test aids: `!dungeonsolo on` also admits a lone 30400 entry to a team boss; `!firstclear <boss> [daysAgo] | clear`
   sets the realm's first clear of a boss.
 

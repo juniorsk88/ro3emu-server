@@ -126,13 +126,13 @@ public sealed class ServerMetrics : IDisposable
     }
     public DatabaseOpenMeasurement MeasureDatabaseOpen() => new(this);
 
-    public object Snapshot(SessionRegistry? registry = null, PublicLineManager? publicLines = null)
+    public object Snapshot(SessionCensus.Snapshot? census = null, PublicLineManager? publicLines = null)
     {
         var e = Current;
         double elapsed = Stopwatch.GetElapsedTime(e.StartedAt).TotalSeconds;
         var tick = e.TickDurationMs.Snapshot();
         using var process = Process.GetCurrentProcess();
-        var sessions = registry?.All() ?? [];
+        census ??= SessionCensus.Snapshot.Empty;
         var connections = _connections.Values.ToArray();
         var operations = e.Database.ToDictionary(x => x.Key, x => new
         {
@@ -197,13 +197,13 @@ public sealed class ServerMetrics : IDisposable
             ownership = Owners?.Snapshot(),
             sessions = new
             {
-                login = sessions.Count(s => s.Role == null), loading = sessions.Count(s => s.Role != null && s.SceneLoading),
-                inWorld = sessions.Count(s => s.Role != null && !s.SceneLoading),
-                byMap = sessions.Where(s => s.Role != null).Select(s => new { map = s.RuntimeMap, loading = s.SceneLoading })
-                    .GroupBy(s => s.map).Select(g => new { map = g.Key.SceneEntry, line = g.Key.LineNumber,
+                capturedUtc = census.CapturedUtc,
+                login = census.Login, loading = census.Roles.Count(s => s.Loading),
+                inWorld = census.Roles.Count(s => !s.Loading),
+                byMap = census.Roles.GroupBy(s => s.Map).Select(g => new { map = g.Key.SceneEntry, line = g.Key.LineNumber,
                         kind = g.Key.Kind.ToString(), runtimeId = g.Key.Id, sceneId = g.Key.WorldScene,
-                        count = g.Count(), loading = g.Count(s => s.loading) }).ToArray(),
-                publicLines = publicLines == null ? null : sessions.Where(s => s.Role != null).Select(s => s.SceneEntry)
+                        count = g.Count(), loading = g.Count(s => s.Loading) }).ToArray(),
+                publicLines = publicLines == null ? null : census.Roles.Select(s => s.Map.SceneEntry)
                     .Distinct().SelectMany(publicLines.Snapshot).Select(l => new { map = l.Map.SceneEntry,
                         line = l.Map.LineNumber, sceneId = l.Map.WorldScene, players = l.Players,
                         reservations = l.Reservations, softLimit = l.SoftLimit, hardLimit = l.HardLimit }).ToArray(),

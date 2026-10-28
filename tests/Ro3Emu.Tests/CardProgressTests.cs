@@ -671,4 +671,30 @@ public sealed class CardProgressTests : IAsyncLifetime
         while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, "data"))) dir = dir.Parent;
         return dir?.FullName ?? throw new DirectoryNotFoundException("repo data");
     }
+
+    [ClientDataFact]
+    public async Task HeadCardsFindAnOpenSlotUnlessOpenCardSlotsIsOff()
+    {
+        const int HeadCard = 1420700; // _iCardPart 7: the head accessory grid 8, which the game data gives no unlock condition
+        var options = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<Ro3Emu.Server.ServerOptions>>().Value;
+        Assert.True(options.OpenCardSlots); // on by default (owner's choice)
+        await using var alice = await InWorld("Alice");
+        await Next(alice, CardService.StorageHoleSync, DBStorageHoleInfoIncrement.Parser);
+        await Gm("alice", "!lvl 20");
+        await Gm("alice", $"!item {HeadCard} 2");
+        var cards = await Next(alice, CharacterService.ItemsSync, DBItemsInfoIncrement.Parser,
+            m => m.PackInfo.TryGetValue(3, out var p) && p.All?.Items.Values.Any(i => i.ItemEntry == HeadCard) == true);
+        long guid = cards.PackInfo[3].All.Items.Values.First(i => i.ItemEntry == HeadCard).ItemGuid;
+        options.OpenCardSlots = false;
+        try
+        {
+            await alice.SendGameAsync(CardService.SlotInsert, new EquipmentCardInsertReq { EquipPos = (EquipGridType)8, SlotIndex = 1, CardGuid = guid });
+            Assert.Equal(ErrorCodes.SlotSealed, (await Next(alice, CardService.SlotInsert, EquipmentCardInsertResp.Parser)).Result);
+        }
+        finally { options.OpenCardSlots = true; }
+        await alice.SendGameAsync(CardService.SlotInsert, new EquipmentCardInsertReq { EquipPos = (EquipGridType)8, SlotIndex = 1, CardGuid = guid });
+        Assert.Equal(0, (await Next(alice, CardService.SlotInsert, EquipmentCardInsertResp.Parser)).Result);
+        var inserted = await Next(alice, CharacterService.ItemsSync, DBItemsInfoIncrement.Parser, m => m.StoragePack?.All?.CardInfo.ContainsKey(8) == true);
+        Assert.Equal(HeadCard, inserted.StoragePack.All.CardInfo[8].CardSlotInfo[1].ItemEntry);
+    }
 }

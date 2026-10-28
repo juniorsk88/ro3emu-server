@@ -506,7 +506,7 @@ public static class EconomyLedgerReader
                         issues.Add(new(EconomyIssueKind.Corruption, "leg/" + op + "/" + leg.LegNumber,
                             "Leg has a foreign actor or noncanonical holding location."));
                     if (escrow && (location.Owner.Id.Length == 0 || location.Key.Length == 0 ||
-                        location.Compartment is < EconomyCompartment.Inventory or > EconomyCompartment.Recovery))
+                        location.Compartment is < EconomyCompartment.Inventory or > EconomyCompartment.Vault))
                         issues.Add(new(EconomyIssueKind.Corruption, "leg/" + op + "/" + leg.LegNumber,
                             "E03 leg has a noncanonical holding location."));
                     if (!economic && !isEvent && !escrow && allReceipts.ContainsKey(seq)) // E05d semantic receipts only

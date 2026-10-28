@@ -150,7 +150,7 @@ public sealed partial class WorldCoreService
             }
             if (committed) await character.ItemsChangedAsync(s, stats: false);
             await s.SendGameAsync(ReliveItem, new EntityReliveCostItemResp { Result = error });
-            if (committed)
+            if (committed && s.Role != null)
             {
                 await combat.PublishReviveAsync(s, null);
                 await dungeons.PublishExternalReviveAsync(s);

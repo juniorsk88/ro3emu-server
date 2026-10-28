@@ -171,6 +171,12 @@ public sealed partial class DungeonTests
         await PlotEnd(alice, 140020);
 
         await Stage(alice, 4, quest: 2);
+        // The floor line of guide point 38 (PGuideWayList) leads to the instrument; no earlier step lit one.
+        var guide = await Next(alice, DungeonService.Event, DungeonEventNotify.Parser,
+            n => n.Vars.Any(v => v.VarId == DungeonService.GuideWayVar));
+        Assert.Equal([38L], guide.Vars.Single(v => v.VarId == DungeonService.GuideWayVar).Vi64);
+        Assert.Single(alice.Inbox.Snapshot().Where(e => e.IsGame(DungeonService.Event))
+            .Where(e => DungeonEventNotify.Parser.ParseFrom(e.Body).Vars.Any(v => v.VarId == DungeonService.GuideWayVar)));
         var instrument = Service<WorldData>().Map(scene)!.Points[37];
         await WalkTo(alice, instrument.X + 6, instrument.Y, instrument.Z); // not yet within its 4 m
         await Task.Delay(200);

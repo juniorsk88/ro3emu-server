@@ -102,6 +102,15 @@ public sealed partial class CharacterService
     /// <summary>The character's own raw contributions (gear, cards, talents, buffs, level and job rows, conversions).</summary>
     private void AddOwnAttributes(GameSession session, RoleProgress p, Action<long, double> Add)
     {
+        // The extra "stats" of AttributeConversionConfig (20-24: HP/PATK%/MATK%/ATK/DEF per point, 30: element resistances, 31: status immunities; given by
+        // Soul Echo primaries and a few cards) convert like STR..LUK: whatever the sheet collects under those ids is converted at the end.
+        var converted = new Dictionary<long, double>();
+        var addRaw = Add;
+        Add = (id, v) =>
+        {
+            if (id is >= 20 and <= 24 or 30 or 31) converted[id] = converted.GetValueOrDefault(id) + v;
+            addRaw(id, v);
+        };
         var baseStats = new double[6];
         for (int i = 0; i < 6; i++) baseStats[i] = p.Stats[i];
         foreach (var item in Equipped(session))
@@ -190,6 +199,9 @@ public sealed partial class CharacterService
             if (data.Row("AttributeConversionConfig", stat) is not { } conversion) continue;
             foreach (var (id, perPoint) in GameData.Pairs(conversion, ranged ? "_kAttribute2" : "_kAttribute1")) Add(id, perPoint * baseStats[stat - 1]);
         }
+        foreach (var (stat, total) in converted.ToArray())
+            if (data.Row("AttributeConversionConfig", stat) is { } extra)
+                foreach (var (id, perPoint) in GameData.Pairs(extra, ranged ? "_kAttribute2" : "_kAttribute1")) addRaw(id, perPoint * total);
     }
 
     /// <summary>The self property list: the fixed set plus every member attribute the sheet carries (1031 ...).</summary>

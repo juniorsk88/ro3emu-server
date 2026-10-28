@@ -81,6 +81,7 @@ public static class ClientPatcher
             {
                 "Assembly-CSharp.dll" => m => RedirectChat(m, hooksDll) + "; " + VoiceStubPatch.Patch(m, hooksDll) + "; " + VoiceEnablePatch.Patch(m)
                     + "; " + TextSink.PatchLanguageGet(m, locDll),
+                "Happyengine.Network.dll" => OriginGuardPatch.Patch,
                 "Happyengine.Base.Runtime.dll" when VerboseLogs => ForceShowLog,
                 "Unity.TextMeshPro.dll" => m => TextSink.PatchTmp(m, locDll, hooksDll),
                 "HUD.dll" => m => TextSink.PatchHud(m, locDll),
@@ -306,6 +307,11 @@ public static class ClientPatcher
                 try { VoiceStubPatch.Patch(assembly.MainModule, File.Exists(hooksDll) ? hooksDll : null); }
                 catch (InvalidOperationException e) { problems.Add(e.Message); }
                 try { VoiceEnablePatch.Patch(assembly.MainModule); }
+                catch (InvalidOperationException e) { problems.Add(e.Message); }
+            }
+            if (file == "Happyengine.Network.dll")
+            {
+                try { OriginGuardPatch.Verify(assembly.MainModule); }
                 catch (InvalidOperationException e) { problems.Add(e.Message); }
             }
             if (file == "Unity.TextMeshPro.dll" && assembly.MainModule.GetType("TMPro.TMP_Text") == null) problems.Add("TMPro.TMP_Text not found");

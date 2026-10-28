@@ -39,12 +39,22 @@ internal static class Ui
         }
     }
 
+    /// <summary>
+    /// A program that reads this output (the RO3 launcher) sets RO3EMU_PROGRESS=lines and gets every progress update as
+    /// its own "PROGRESS text" line; with the output redirected and no such request there is no progress line at all.
+    /// </summary>
+    private static readonly bool ProgressLines = Environment.GetEnvironmentVariable("RO3EMU_PROGRESS") == "lines";
+
     /// <summary>Rewrites one status line (no log).</summary>
     public static void Progress(string text)
     {
         lock (Gate)
         {
-            if (Console.IsOutputRedirected) return;
+            if (Console.IsOutputRedirected)
+            {
+                if (ProgressLines) Console.WriteLine("PROGRESS " + text);
+                return;
+            }
             int width = Math.Max(20, SafeWidth() - 1);
             if (text.Length > width) text = text[..width];
             Console.Write("\r  " + text.PadRight(width - 2));

@@ -137,7 +137,7 @@ public sealed class DungeonMatchService : IGameTicker
         foreach (var member in item.Members)
             await SendQuietAsync(member, StartMatch, new StartMatchResp { MatchEntryId = req.MatchEntryId,
                 MatchData = item.Data.Clone(), MatchStartTime = startSeconds });
-        if (item.Members.Length == 1 && s.DungeonSoloMatch)
+        if (item.Members.Length == 1 && dungeons.SoloAllowed(s))
         {
             list.Remove(item);
             if (list.Count == 0) queue.Remove(item.Key);

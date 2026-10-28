@@ -126,6 +126,62 @@ public sealed class DungeonMatchTests : IAsyncLifetime
     }
 
     [ClientDataFact]
+    public async Task ServerOptionLetsALoneRoleMatchIntoATeamBossWithoutTheGmTestAid()
+    {
+        var options = Service<Microsoft.Extensions.Options.IOptions<ServerOptions>>().Value;
+        Assert.False(options.DungeonSolo);
+        await using var alice = await InWorld("Alice");
+        await Gm(alice, "!lvl 99");
+        // Off, the default: a lone role waits in the queue for a team.
+        await Start(alice);
+        Assert.True(Service<DungeonMatchService>().Owns(Session(alice)));
+        Assert.False(Session(alice).DungeonSoloMatch);
+        await alice.SendGameAsync(DungeonMatchService.CancelMatch, new CancelMatchReq { MatchEntryId = Entry });
+        Assert.Equal(0, (await Next(alice, DungeonMatchService.CancelMatch, CancelMatchResp.Parser)).Result);
+        Assert.False(Service<DungeonMatchService>().Owns(Session(alice)));
+
+        // On: the same request forms the match at once, with no GM test aid on the session.
+        options.DungeonSolo = true;
+        try
+        {
+            await Start(alice);
+            Assert.False(Session(alice).DungeonSoloMatch);
+            var ready = await Next(alice, DungeonMatchService.ReadyNotify, MatchReadyNotify.Parser, n => n.ReadyInfos.Count == 1);
+            Assert.Equal(Scene, ready.DungeonId);
+            Assert.Equal((long)alice.Self!.Uuid, ready.ReadyInfos[0].PlayerId);
+        }
+        finally { options.DungeonSolo = false; }
+    }
+
+    [ClientDataFact]
+    public async Task ALoneRoleMeetsTheTeamBossWithTheScaledStatsOfDungeonSoloJson()
+    {
+        File.WriteAllText(Path.Combine(dataDir, "dungeon-solo.json"), """{ "hpPercent": 50, "attackPercent": 40 }""");
+        var options = Service<Microsoft.Extensions.Options.IOptions<ServerOptions>>().Value;
+        options.DungeonSolo = true;
+        try
+        {
+            await using var alice = await InWorld("Alice");
+            await Gm(alice, "!lvl 99");
+            await Start(alice);
+            await Next(alice, DungeonMatchService.ReadyNotify, MatchReadyNotify.Parser, n => n.ReadyInfos.Count == 1);
+            await alice.SendGameAsync(DungeonMatchService.Ready, new MatchReadyReq
+            { MatchEntryId = Entry, PlayerId = (long)alice.Self!.Uuid, IsReady = true });
+            Assert.Equal(0, (await Next(alice, DungeonMatchService.Ready, MatchReadyResp.Parser)).Result);
+            await Load(alice);
+            var attempt = Session(alice).DungeonAttempt!;
+            var deadline = DateTime.UtcNow + Wait;
+            while (attempt.Room.Monsters.Count == 0 && DateTime.UtcNow < deadline) await Task.Delay(50);
+            var boss = attempt.Room.Monsters.First();
+            var original = Service<MonsterService>().Template(boss.Template.NpcId)!;
+            Assert.Equal(original.MaxHp / 2, boss.Template.MaxHp);
+            Assert.Equal(original.Atk * 40 / 100, boss.Template.Atk);
+            Assert.Equal(original.Def, boss.Template.Def);
+        }
+        finally { options.DungeonSolo = false; }
+    }
+
+    [ClientDataFact]
     public async Task SelectionCancellationSoloVoteDeclineAndDeadline()
     {
         await using var alice = await InWorld("Alice");

@@ -11,6 +11,9 @@ public sealed partial class DungeonService
         return error != 0 ? error : Preparing(s) ? ErrorCodes.DungeonPreparing : 0;
     }
 
+    /// <summary>A lone role may start a team boss: the server switch Ro3Emu:DungeonSolo, or the GM test aid on this session.</summary>
+    public bool SoloAllowed(GameSession s) => options.DungeonSolo || s.DungeonSoloMatch;
+
     /// <summary>
     /// The 82637 vote has already finished. The normal dungeon owner allocates the room and performs
     /// 30107/70010/30005/30401; no second 42033/30406 vote is issued (LC_DAL_Match and LC_DAL_Team).
@@ -19,7 +22,7 @@ public sealed partial class DungeonService
     {
         if (members.Length == 0 || members.Distinct().Count() != members.Length
             || members.Any(s => s.Role == null || !sessions.All().Contains(s))) return ErrorCodes.PlayerOffline;
-        if (members.Length < plan.MinPlayers && !(members.Length == 1 && members[0].DungeonSoloMatch))
+        if (members.Length < plan.MinPlayers && !(members.Length == 1 && SoloAllowed(members[0])))
             return ErrorCodes.DungeonTeamSize;
         if (members.Length > plan.MaxPlayers) return ErrorCodes.PartyFull;
         foreach (var member in members)

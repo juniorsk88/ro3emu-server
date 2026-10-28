@@ -58,6 +58,9 @@ public sealed partial class BuffService : IGameTicker
         _ => 0,
     };
 
+    /// <summary>Asked before a buff from another source is placed on a player: true refuses it (card status immunities, Endure).</summary>
+    public Func<GameSession, int, bool>? Refuses { get; set; }
+
     /// <summary>Place or refresh a validated buff. Zero-time source rows retain the previous 60s fallback (inferred).</summary>
     public Task AddAsync(GameSession p, int configId, int durationMs, long sourceId) =>
         AddCoreAsync(p, configId, durationMs, sourceId, null);
@@ -81,6 +84,7 @@ public sealed partial class BuffService : IGameTicker
         if (sourceId != p.Role.Id && !ApplyDecay(p.Role.Id, p.SceneEntry, configId, ref durationMs)) return;
         long now = MonsterService.NowMs;
         int group = (int)GameData.Int(row, "_iBuffID");
+        if (sourceId != p.Role.Id && Refuses?.Invoke(p, group) == true) return;
         bool multiSource = GameData.Int(row, "_iMultiSource") != 0;
         var existing = p.Buffs.FirstOrDefault(b => !b.IsPassive && !b.IsTotemOwned && data.Row("BuffConfig", b.ConfigId) is { } old
             && GameData.Int(old, "_iBuffID") == group && (!multiSource || b.SourceId == sourceId));

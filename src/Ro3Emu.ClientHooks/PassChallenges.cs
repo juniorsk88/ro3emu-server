@@ -107,7 +107,11 @@ namespace Ro3Emu.ClientHooks
             if (++_checkIn >= 30)
             {
                 _checkIn = 0;
-                try { if (!Present()) Debug.Log("[Ro3Emu.Pass] config reloaded; challenge rows " + (Inject() ? "added again" : "NOT added")); }
+                try
+                {
+                    if (!Present()) Debug.Log("[Ro3Emu.Pass] config reloaded; challenge rows " + (Inject() ? "added again" : "NOT added"));
+                    else if (Configs() is { } dbm) NpcShops.Inject(dbm); // DialogueConfig can be released on its own
+                }
                 catch (Exception e) { Debug.LogWarning("[Ro3Emu.Pass] row check failed: " + e.Message); }
             }
             if (_openInTicks <= 0 || --_openInTicks > 0) return;
@@ -179,6 +183,7 @@ namespace Ro3Emu.ClientHooks
                 "_iID", ActivityId, "_iName", List(title), "_iActivityType", 0L,
                 "_kTaskRenew", List(List(0L, TaskType, DailySonType, 0L), List(0L, TaskType, WeeklySonType, 0L))));
             NovicePass.Inject(dbm, texts);
+            NpcShops.Inject(dbm);
             return Present();
         }
 
@@ -275,6 +280,17 @@ namespace Ro3Emu.ClientHooks
         /// <summary>A config's raw rows: Lua_DBManager's lazy proxy loads it on first access.</summary>
         internal static Obf_R.Obf_ff Values(Obf_R.Obf_ff manager, string config) =>
             manager.Obf_RuA<Obf_R.Obf_ff>(config)?.Obf_RuA<Obf_R.Obf_ff>("m_kConfigData")?.Obf_RuA<Obf_R.Obf_ff>("m_kValues");
+
+        /// <summary>The number of rows in a list of row tables, counted by index (this Lua may have no rawlen).</summary>
+        internal static long Length(Obf_R.Obf_ff table)
+        {
+            long n = 0;
+            while (n < 64 && table.Obf_ruA<long, Obf_R.Obf_ff>(n + 1) != null) n++;
+            return n;
+        }
+
+        /// <summary>Puts a value after the last row of a list table.</summary>
+        internal static void Append(Obf_R.Obf_ff table, object value) => RawSet(table, Length(table) + 1, value);
 
         /// <summary>A new Lua table: table.pack() without its count field.</summary>
         private static Obf_R.Obf_ff NewTable()

@@ -242,6 +242,16 @@ public sealed class MarketTransaction
         return id;
     }
 
+    /// <summary>A system letter with its own title and text (player trade, send, vault withdrawal), in the same transaction.</summary>
+    public string DeliverRawMail(long roleId, string title, string content, string sender,
+        IEnumerable<InvItem>? items = null, IReadOnlyDictionary<int, long>? currency = null)
+    {
+        string id = mail.DeliverMarketRaw(plan, Now, roleId, title, content, sender, items, currency);
+        writes = true;
+        MailRecipients.Add(roleId);
+        return id;
+    }
+
     public MarketParticipant Role(long id)
     {
         if (participants.TryGetValue(id, out var found)) return found;

@@ -80,6 +80,10 @@ internal static class InstallFlow
             throw new InstallException($"The servers offer release {release.Sequence}, older than the {installed} already installed here.",
                 "Try again later; RO3Emu does not install an older release over a newer one.");
 
+        if (only == null && ReleaseLimit.HoldsBack(release.Sequence, ReleaseLimit.Read(SetupHome.AppDir), ClientLocator.IsClient(folder)))
+            throw new SetupException($"The publisher released {release.Sequence}, which is newer than this RO3Emu supports yet; your game was left on its current release.",
+                "Keep playing as you are. When an RO3Emu update that supports this release is out, run the update again. Do not update with the publisher's launcher until then.");
+
         Func<string, bool>? include = only ?? (options.Only is { } pattern ? Glob(pattern) : null);
         Ui.Step(include == null ? $"Comparing {manifests.Full.TargetFiles.Count} files with {folder}" : $"Comparing the needed files with {folder}");
         var progress = new ProgressLine();

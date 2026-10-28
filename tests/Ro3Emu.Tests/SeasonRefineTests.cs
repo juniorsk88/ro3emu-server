@@ -99,12 +99,10 @@ public sealed class SeasonRefineTests : IAsyncLifetime
         await using var alice = new BotClient(http, File.ReadAllText(Path.Combine(dataDir, "gate_rsa_public.pem")));
         await alice.LoginAsync("alice", "pw");
         await alice.EnterGateAsync();
-        await alice.SendGameAsync(SeasonRefineService.Recast, new SeasonRefineRecastReq { EquipType = 1, RefineId = 1 });
-        Assert.Equal(ErrorCodes.FeatureUnavailable, (await Next(alice, SeasonRefineService.Recast, SeasonRefineRecastResp.Parser)).Result);
-        await alice.SendGameAsync(SeasonRefineService.SelectAttr, new SeasonRefineSelectAttrReq { EquipType = 1, RefineId = 1, GroupId = 1 });
-        Assert.Equal(ErrorCodes.FeatureUnavailable, (await Next(alice, SeasonRefineService.SelectAttr, SeasonRefineSelectAttrResp.Parser)).Result);
-        await alice.SendGameAsync(SeasonRefineService.GiveUp, new SeasonRefineGiveUpReq { EquipType = 1, RefineId = 1 });
-        Assert.Equal(ErrorCodes.FeatureUnavailable, (await Next(alice, SeasonRefineService.GiveUp, SeasonRefineGiveUpResp.Parser)).Result);
+        // No role yet: the stage gate drops these unanswered, and the connection stays up.
+        await StageGate.Unanswered(alice, SeasonRefineService.Recast, new SeasonRefineRecastReq { EquipType = 1, RefineId = 1 });
+        await StageGate.Unanswered(alice, SeasonRefineService.SelectAttr, new SeasonRefineSelectAttrReq { EquipType = 1, RefineId = 1, GroupId = 1 });
+        await StageGate.Unanswered(alice, SeasonRefineService.GiveUp, new SeasonRefineGiveUpReq { EquipType = 1, RefineId = 1 });
         Assert.Equal(0, (await alice.CreateRoleAsync("Alice")).Result);
     }
 

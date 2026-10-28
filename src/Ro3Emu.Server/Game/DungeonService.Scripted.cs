@@ -17,6 +17,8 @@ public sealed partial class DungeonService
 {
     /// <summary>DungeonVariableFunctionConfig 100020016: start function PlayCutSceneStory, array; [plot] plays it.</summary>
     public const int StoryVar = 100020016;
+    /// <summary>LC_DunGeon_VarDefine 10021 PGuideWayList (table of numbers, component GuideGfx): the guide point ids whose line the client draws.</summary>
+    public const int GuideWayVar = 10021;
     /// <summary>
     /// Scene actor UIDs: their own namespace, so 32700 for them never reaches the world NPC lookup. It must stay below
     /// 2^53: LC_InteractManager hands unit ids to UT_SceneObjectManagerHelper through a double array (m_kShareMemory),
@@ -75,6 +77,17 @@ public sealed partial class DungeonService
     {
         a.StepDone = false;
         await SyncSceneActorsAsync(a, step.Actors);
+        if ((step.Guide is { Count: > 0 } || a.GuideShown) && !a.Settled && !a.Room.Closed)
+        {
+            // The line of each listed guide point (LC_SceneCom_GuideGfx._updateGuideWayList): points no longer listed are
+            // removed, so a later step without a guide sends the empty list.
+            a.GuideShown = step.Guide is { Count: > 0 };
+            await BroadcastAsync(a, Event, new DungeonEventNotify
+            {
+                DungeonEntry = a.Plan.SceneEntry, EventType = (DungeonEventType)4, // DungeonEventDungeonVarChange
+                StageNum = a.Wave + 1, LevelNum = 1, Vars = { new DungeonVar { VarId = GuideWayVar, Vi64 = { step.Guide ?? [] } } },
+            });
+        }
         if (step.Story != 0 && !a.Settled && !a.Room.Closed)
             // Once, in a var-change event: the client calls PlayCutSceneStory on every push of this var.
             await BroadcastAsync(a, Event, new DungeonEventNotify

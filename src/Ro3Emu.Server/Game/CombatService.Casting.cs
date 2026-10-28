@@ -33,6 +33,13 @@ public sealed partial class CombatService
     public const uint SkillMove = 31112, TrapDamage = 31128;
 
     /// <summary>
+    /// Run for the role's own cast once it is accepted, before its costs are paid and with the role's state lock held
+    /// (MountService: casting gets the role off its mount, as hitting or being hit does, so the client plays the dismount
+    /// and then the cast instead of a cast on a mount). Registered after construction (ServerHost).
+    /// </summary>
+    public List<Func<GameSession, JsonElement, Task>> BeforeCast { get; } = new();
+
+    /// <summary>
     /// 31102: row identity, ownership, selector, mode, all costs and cooldowns are checked before the cast commits.
     /// Target/position come from CastSkillReq; m_kSelectInfo uses relation masks, never _iDmgType as a selector.
     /// Evidence: LC_Skill_Function.SendSkill, SkillConfig.GetCost*, MG_Skill.proto.
@@ -82,9 +89,13 @@ public sealed partial class CombatService
         {
             int group = (int)GameData.Int(row!.Value, "_iSkillID"), mode = (int)GameData.Int(row.Value, "_iMode");
             if (Math.Max(s.SkillCds.GetValueOrDefault(group), s.SkillModeCds.GetValueOrDefault((group, mode))) > Now) error = ErrorCodes.SkillCooldown;
-            // Preserve the established cooldown refusal for a repeated cast, including during its action tail.
+            // Preserve the established cooldown refusal for a repeated cast, including during its action tail. A cast
+            // that may be cancelled (_bCancelCast 1) is only cancelled by another skill, when it has a chant: the same
+            // chanted skill asked again before its hit (the key held down, Fire Bolt's 0.5 s cooldown inside its 1.0 s
+            // chant) would cancel every cast before it landed. An instant skill (no chant) asked again still replaces it.
             else if (s.SkillCast is { Cancelled: false } active && Now < active.StartMs + active.ChantMs + active.ActionMs
-                && GameData.Int(row.Value, "_bCancelCast") == 0) error = ErrorCodes.SkillBusy;
+                && (SkillNoCancel && GameData.Int(active.Row, "_iIsNormalAtk") != 1 || GameData.Int(row.Value, "_bCancelCast") == 0
+                    || active.ChantMs > 0 && !active.Resolved && GameData.Int(active.Row, "_iSkillID") == group)) error = ErrorCodes.SkillBusy;
             else error = ValidateTarget(s, row.Value, req, origin, owned == null ? WalkSlack(s) : 0);
         }
         var costs = row is { } value ? ResolveCosts(s, value) : new CastCosts();
@@ -111,6 +122,7 @@ public sealed partial class CombatService
             s.SceneGeneration != scene || s.WorldScene != worldScene || s.SceneLoading) return;
         await CancelCastAsync(s, SkillInterruptedInfo.Types.SkillInterruptType.Skill);
         eventAttacks.Remove(s);
+        if (owned == null) foreach (var hook in BeforeCast) await hook(s, row!.Value);
         await PayCostsAsync(s, costs);
         await buffs.SpendEnergyAsync(s, row!.Value);
         await s.SendGameAsync(UseSkill, new CastSkillRsp { SessionId = id, IsAutoCast = req.IsAutoCast });
@@ -123,13 +135,13 @@ public sealed partial class CombatService
         if (GameData.Int(row!.Value, "_iIfAutoAtk") == 2 && owned == null && target != null && CanHitMonster(s, target))
         {
             s.Attack = new AttackLoop { Target = target, SkillId = loopSkill,
-                NextSwingMs = Now + SkillMs(s, row.Value) + Math.Max(0, GameData.Int(row.Value, "_iChantFix") + GameData.Int(row.Value, "_iChantVar")) + 1,
-                StartX = s.Position.X, StartZ = s.Position.Z };
+                NextSwingMs = Now + SkillMs(s, row.Value) + ChantFor(s, row.Value) + 1,
+                StartX = s.Position.X, StartZ = s.Position.Z, StartedWalking = s.Walking, StartMs = Now };
         }
         else s.Attack = null;
         if (GameData.Int(row.Value, "_iIfAutoAtk") == 2 && owned == null && playerTarget != null)
             eventAttacks[s] = new EventAttack(playerTarget, loopSkill,
-                Now + SkillMs(s, row.Value) + Math.Max(0, GameData.Int(row.Value, "_iChantFix") + GameData.Int(row.Value, "_iChantVar")) + 1,
+                Now + SkillMs(s, row.Value) + ChantFor(s, row.Value) + 1,
                 s.Position.X, s.Position.Z);
         await StartCooldownAsync(s, row.Value);
         await StartCastAsync(s, row.Value, req, id, owned);
@@ -301,6 +313,9 @@ public sealed partial class CombatService
                 default: result.Invalid = true; break; // reject an unsupported cost rather than grant a free cast.
             }
         }
+        // MP Cost 1231/1232 (basis points; the Mistress card is -20%, a Pharaoh card +15%): the SP a skill takes. (inferred: they add up)
+        if (options.Value.CastAttributes && result.Attrs.TryGetValue(2001, out long sp) && sp > 0)
+            result.Attrs[2001] = Math.Max(0, (long)Math.Round(sp * Math.Max(0, 1 + (stats[1231] + stats[1232]) / 10000.0)));
         return result;
     }
 
@@ -331,6 +346,14 @@ public sealed partial class CombatService
     {
         int group = (int)GameData.Int(row, "_iSkillID"), mode = (int)GameData.Int(row, "_iMode");
         long now = Now, cd = GameData.Int(row, "_iCD");
+        double ownFactor = 1, publicFactor = 1;
+        if (options.Value.CastAttributes)
+        {
+            var stats = character.Stats(s); // Skill CD% 205 and Global CD% 206: positive = shorter (Arcane Acceleration +8000, Cooldown Potion +1000)
+            ownFactor = Math.Clamp(1 - stats[205] / 10000.0, 0, 2);
+            publicFactor = Math.Clamp(1 - stats[206] / 10000.0, 0, 2);
+            cd = (long)Math.Round(cd * ownFactor);
+        }
         var notice = new SkillCdNotify { Uuid = s.Role!.Id };
         void Set(int g, int m, long duration, bool shared)
         {
@@ -348,8 +371,24 @@ public sealed partial class CombatService
         {
             int sibling = (int)groups[i];
             if (data.Row("SkillConfig", sibling) is { } siblingRow) sibling = (int)GameData.Int(siblingRow, "_iSkillID");
-            if (sibling > 0) Set(sibling, 0, (long)shared[i], true);
+            if (sibling > 0) Set(sibling, 0, (long)Math.Round(shared[i] * publicFactor), true);
         }
+        if (notice.Infos.Count > 0) await s.SendGameAsync(SkillCdUpdate, notice);
+        if (cd > 0) foreach (var handler in SkillCooldownStarted) await handler(s, row);
+    }
+
+    /// <summary>Ends a skill group's running cooldowns now (a card's reset), telling the client so it can cast again.</summary>
+    internal async Task ResetCooldownAsync(GameSession s, int group)
+    {
+        long now = Now;
+        var notice = new SkillCdNotify { Uuid = s.Role!.Id };
+        foreach (var (key, end) in s.SkillModeCds.Where(c => c.Key.Group == group && c.Value > now).ToArray())
+        {
+            s.SkillModeCds.Remove(key);
+            notice.Infos.Add(new SkillCdInfo { SkillId = group, SkillMode = key.Mode, CdStartTimestampMs = now, CdEndTimestampMs = now });
+        }
+        if (s.SkillCds.Remove(group) && notice.Infos.Count == 0)
+            notice.Infos.Add(new SkillCdInfo { SkillId = group, CdStartTimestampMs = now, CdEndTimestampMs = now });
         if (notice.Infos.Count > 0) await s.SendGameAsync(SkillCdUpdate, notice);
     }
 
@@ -391,7 +430,7 @@ public sealed partial class CombatService
         {
             Id = id, OwnerId = s.Role!.Id, WorldScene = s.WorldScene, SceneGeneration = s.SceneGeneration,
             Attachment = s.Attachment, Request = req, Row = row, Origin = origin, StartedWalking = actor == null && s.Walking,
-            StartMs = Now, ChantMs = (int)Math.Max(0, GameData.Int(row, "_iChantFix") + GameData.Int(row, "_iChantVar")), ActionMs = SkillMs(s, row), Operator = actor,
+            StartMs = Now, ChantMs = ChantFor(s, row), ActionMs = SkillMs(s, row), Operator = actor,
         };
         s.SkillCast = action;
         s.WorldState.ResurrectionCastId = Script(row) == "Resurrection" ? id : 0;
@@ -443,10 +482,19 @@ public sealed partial class CombatService
         return (int)Math.Round(Math.Max(1, GameData.Int(row, "_iActionTime")) / Math.Max(0.1, 1 + (aspd - 1) * influence));
     }
 
+    /// <summary>Ro3Emu:SkillNoCancel (set from ServerOptions at start): no skill cancels the skill being cast (a basic attack still yields).</summary>
+    public bool SkillNoCancel { get; set; } = true;
+
     public async Task InterruptAsync(GameSession s, SkillInterruptReq? req = null)
     {
         bool valid = req == null || req.InterruptSkillId == 0 || req.InterruptSkillId == s.SkillCast?.Request.SkillId
             || req.InterruptSkillId == s.Attack?.SkillId || eventAttacks.TryGetValue(s, out var eventAttack) && req.InterruptSkillId == eventAttack.SkillId;
+        // SkillNoCancel: the client's auto-battle asks "interrupt this and cast the next skill"; the running skill finishes instead.
+        if (SkillNoCancel && req?.NxtSkill != null && s.SkillCast is { Cancelled: false } running && GameData.Int(running.Row, "_iIsNormalAtk") != 1)
+        {
+            await s.SendGameAsync(SkillInterrupt, new SkillInterruptResp { IsInterruptSucc = false });
+            return;
+        }
         bool interrupted = valid && (s.SkillCast != null || s.Attack != null || eventAttacks.ContainsKey(s));
         if (interrupted)
         {
@@ -462,7 +510,10 @@ public sealed partial class CombatService
     {
         s.WorldState.ResurrectionCastId = 0;
         if (s.SkillCast is not { } action) return;
-        action.Cancelled = true;
+        // A cast that already reached its impact has committed its hit (it may still be waiting for the projectile to
+        // land): the next skill replaces it on screen but must not take the damage away. Held keys repeat the request
+        // inside that window, and cancelling there made every cast fill its chant bar and hit nothing.
+        if (!(action.Resolved && cause == SkillInterruptedInfo.Types.SkillInterruptType.Skill)) action.Cancelled = true;
         s.SkillCast = null;
         await ToPlayerAndViewersAsync(s, SkillEnd, new SkillEndNotify
         {
@@ -475,7 +526,19 @@ public sealed partial class CombatService
     {
         if (eventAttacks.TryGetValue(s, out var eventAttack)
             && MonsterService.Distance(eventAttack.StartX, eventAttack.StartZ, s.Position.X, s.Position.Z) > 1.5f) eventAttacks.Remove(s);
-        if (s.Attack is { } a && MonsterService.Distance(a.StartX, a.StartZ, s.Position.X, s.Position.Z) > 0.1f) s.Attack = null;
+        if (s.Attack is { } a && MonsterService.Distance(a.StartX, a.StartZ, s.Position.X, s.Position.Z) > 0.1f)
+        {
+            // Clicking an enemy from afar: the client attacks on reaching range and stops a few ms later (in-game
+            // 11.10), so that first stop is where the auto-attack starts, not a step away that ends it. The 300 ms grace is
+            // inferred. Same rule as the cast below. Ported from upstream #93.
+            if (a.StartedWalking && !s.Walking && Now - a.StartMs <= 300
+                && Distance(new Vec3 { X = a.StartX, Y = s.Position.Y, Z = a.StartZ }, s.Position) <= s.Speed / 100f * 0.75f + 0.5f)
+            {
+                a.StartX = s.Position.X; a.StartZ = s.Position.Z;
+                a.StartedWalking = false;
+            }
+            else s.Attack = null;
+        }
         if (s.SkillCast is not { } cast || Distance(cast.Origin, s.Position) <= 0.1f || GameData.Int(cast.Row, "_bMovement") != 0) return;
         // The client casts on reaching range and stops 1 ms later (in-game 11.10): that first stop is the cast's real
         // origin, within the distance the walk can have covered, not a move that interrupts it.

@@ -64,6 +64,9 @@ public sealed partial class TaskService
                     if ((questMount ?? session.MountState.QuestMount) == recycle) questMount = 0;
                     break;
                 case 621 when action.Length == 1: cutScene = true; break;
+                // 115 MarkGuildActivityJoin and 116 UpdateSocialityScore only record a guild activity join / a social score; neither system has a backend
+                // here, so the quest is delivered without them instead of staying stuck forever (77 quests: 24 guild activities, 53 "Connect" quests). (inferred)
+                case 115 or 116: break;
                 default:
                     log.LogWarning("Task {Task} held at server action {Action}: resource semantics not implemented", def.Id, string.Join(',', action));
                     return false;

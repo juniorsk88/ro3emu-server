@@ -92,10 +92,9 @@ public sealed class Cd13eOwnerTests : IAsyncLifetime
     {
         await using var bot = new BotClient(http, File.ReadAllText(Path.Combine(directory, "gate_rsa_public.pem")));
         await bot.LoginAsync("alice", "pw"); await bot.EnterGateAsync();
-        await bot.SendGameAsync(DungeonService.SetJobPosition, new MultiDungeonSetJobPositionReq { JobPosition = 101 });
-        Assert.Equal(ErrorCodes.Parameter, (await Next(bot, DungeonService.SetJobPosition, MultiDungeonSetJobPositionResp.Parser)).Result);
-        await bot.SendGameAsync(DungeonService.SetGuide, new MultiDungeonSetJobPositionGuideFlagReq { GuideFlag = true });
-        Assert.Equal(ErrorCodes.Parameter, (await Next(bot, DungeonService.SetGuide, MultiDungeonSetJobPositionGuideFlagResp.Parser)).Result);
+        // No role yet: the stage gate drops both, answering nothing.
+        await StageGate.Unanswered(bot, DungeonService.SetJobPosition, new MultiDungeonSetJobPositionReq { JobPosition = 101 });
+        await StageGate.Unanswered(bot, DungeonService.SetGuide, new MultiDungeonSetJobPositionGuideFlagReq { GuideFlag = true });
     }
 
     [ClientDataFact]

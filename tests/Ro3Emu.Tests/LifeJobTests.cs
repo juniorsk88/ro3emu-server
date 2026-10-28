@@ -81,14 +81,25 @@ public sealed class LifeJobTests : IAsyncLifetime
         return await Next(b, LifeJobService.StartForge, StartForgeResp.Parser);
     }
 
+    /// <summary>
+    /// A game message that needs a role is dropped unanswered on the role screen (the stage gate, upstream #36): no answer
+    /// arrives and nothing changes.
+    /// </summary>
+    private static async Task Unanswered(BotClient b, uint request, IMessage message, uint answer)
+    {
+        int before = b.Inbox.Snapshot().Count(e => e.IsGame(answer));
+        await b.SendGameAsync(request, message);
+        await Task.Delay(600);
+        Assert.Equal(before, b.Inbox.Snapshot().Count(e => e.IsGame(answer)));
+    }
+
     [ClientDataFact]
     public async Task LifeRequestsAtRoleScreenCannotMutatePreviousCharacter()
     {
         await using var b = new BotClient(http, File.ReadAllText(Path.Combine(dir, "gate_rsa_public.pem")));
         await b.LoginAsync("alice", "pw"); await b.EnterGateAsync();
-        Assert.Equal(ErrorCodes.FeatureUnavailable, await Switch(b, 1, 1));
-        await b.SendGameAsync(LifeJobService.HealthAll, new GetHealthCostAllReq());
-        Assert.Equal(ErrorCodes.FeatureUnavailable, (await Next(b, LifeJobService.HealthNotify, GetHealthCostNtf.Parser)).Result);
+        await Unanswered(b, LifeJobService.SwitchLife, new SwitchLifeJobReq { NewLifejobId = (LifeJobType)1, OpJobType = 1 }, LifeJobService.SwitchLife);
+        await Unanswered(b, LifeJobService.HealthAll, new GetHealthCostAllReq(), LifeJobService.HealthNotify);
         long id = (await b.CreateRoleAsync("Alice")).RoleBaseInfo.Id;
         await b.EnterWorldAsync(id);
         Assert.NotEqual(0, await Switch(b, 1, 1)); // no certificate
@@ -100,14 +111,10 @@ public sealed class LifeJobTests : IAsyncLifetime
         var roles = app.Services.GetRequiredService<RoleStore>();
         byte[] before = roles.LoadLifeJob(id)!;
         await b.SwitchRoleAsync();
-        Assert.Equal(ErrorCodes.FeatureUnavailable, await Switch(b, 5, 2));
-        await b.SendGameAsync(LifeJobService.StudyRecipe, new StudyRecipeReq { FormulaID = 20001 });
-        Assert.Equal(ErrorCodes.FeatureUnavailable, (await Next(b, LifeJobService.StudyRecipe, StudyRecipeResp.Parser)).Result);
+        await Unanswered(b, LifeJobService.SwitchLife, new SwitchLifeJobReq { NewLifejobId = (LifeJobType)5, OpJobType = 2 }, LifeJobService.SwitchLife);
+        await Unanswered(b, LifeJobService.StudyRecipe, new StudyRecipeReq { FormulaID = 20001 }, LifeJobService.StudyRecipe);
         foreach (long guid in consumables)
-        {
-            await b.SendGameAsync(CharacterService.ItemUse, new ItemUseReq { ItemGuid = guid, ItemCount = 1 });
-            Assert.Equal(ErrorCodes.FeatureUnavailable, (await Next(b, CharacterService.ItemUse, ItemUseResp.Parser)).Result);
-        }
+            await Unanswered(b, CharacterService.ItemUse, new ItemUseReq { ItemGuid = guid, ItemCount = 1 }, CharacterService.ItemUse);
         var savedItems = app.Services.GetRequiredService<ItemStore>().Load(id).Where(i => consumables.Contains(i.Guid)).ToArray();
         Assert.Equal(2, savedItems.Length); Assert.All(savedItems, i => Assert.Equal(1, i.Stack));
         Assert.Equal(before, roles.LoadLifeJob(id));
@@ -285,6 +292,29 @@ public sealed class LifeJobTests : IAsyncLifetime
         await Gm("alice", "!item 1291000 1"); Assert.Equal(0, await Switch(b, 5, 1));
         Assert.False(await OnLoop("alice", s => app.Services.GetRequiredService<FunctionService>().ConditionMet(s, 7000079)));
         Assert.Equal(1, await OnLoop("alice", s => s.LifeJob!.LifeJobInfoMap[1].JobLevel));
+    }
+
+    /// <summary>
+    /// Upstream #87: the client's Unlock button only walks to the gathering area, so Lv. 2 ore (100200, condition 43000000:
+    /// Mining 3) unlocks with the level, at the next gather.
+    /// </summary>
+    [ClientDataFact]
+    public async Task LevelTwoOreUnlocksWithMiningLevelThree()
+    {
+        await using var b = await InWorld("Alice"); Assert.Equal(0, await Learn(b, "alice", 1, 1));
+        var life = app.Services.GetRequiredService<LifeJobService>();
+        Assert.Equal(ErrorCodes.LifeRequirements, await OnLoop("alice", s => life.CheckGather(s, 100200))); // Mining 1
+        await app.Services.GetRequiredService<GameLoop>().InvokeAsync(async () =>
+        {
+            var s = app.Services.GetRequiredService<SessionRegistry>().All().Single(s => s.Account == "alice");
+            using var gate = await CharacterService.Lock(s);
+            s.LifeJob!.LifeJobInfoMap[1].JobLevel = 3;
+            Assert.Equal(0, await life.CompleteGatherAsync(s, 100100, sceneEntry: 10522, pointId: 312));
+        });
+        Assert.Equal(0, await OnLoop("alice", s => life.CheckGather(s, 100200)));
+        Assert.Equal(ErrorCodes.LifeRequirements, await OnLoop("alice", s => life.CheckGather(s, 100300))); // Mining 5
+        var saved = DBLifeJobInfo.Parser.ParseFrom(app.Services.GetRequiredService<RoleStore>().LoadLifeJob((long)b.Self!.Uuid)!);
+        Assert.True(saved.LifeJobInfoMap[1].GatherInfo.ItemDetails.ContainsKey(100200));
     }
 
     [ClientDataTheory]

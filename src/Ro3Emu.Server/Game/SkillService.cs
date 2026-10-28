@@ -3,6 +3,7 @@ using Romsg;
 using Google.Protobuf;
 using Ro3Emu.Server.Accounts;
 using Ro3Emu.Server.Data;
+using Microsoft.Extensions.Options;
 
 namespace Ro3Emu.Server.Game;
 
@@ -26,18 +27,21 @@ public sealed class SkillService
     private readonly CharacterService character;
     private readonly RoleStore roles;
     private readonly ILogger<SkillService> log;
+    private readonly IOptions<ServerOptions> options;
     private Dictionary<(int Group, int Level), int>? _rowIds;
     private Dictionary<int, int>? upgradedGroupByBase;
 
     /// <summary>Combat-owned dynamic queue eligibility (LC_DynamicParamMgr).</summary>
     public Func<GameSession, int, bool>? QueueEligibility { get; set; }
 
-    public SkillService(GameData data, CharacterService character, RoleStore roles, ILogger<SkillService> log)
+    public SkillService(GameData data, CharacterService character, RoleStore roles, ILogger<SkillService> log,
+        IOptions<ServerOptions> options)
     {
         this.data = data;
         this.character = character;
         this.roles = roles;
         this.log = log;
+        this.options = options;
         character.ProgressHandlers.Add(SyncAsync);
     }
 
@@ -60,6 +64,30 @@ public sealed class SkillService
         data.Row("JobConfig", career) is { } job && job.TryGetProperty("_kSkillNormalID", out var n) && n.ValueKind == JsonValueKind.Array && n.GetArrayLength() > 0
             ? n[0].GetInt32()
             : 1000001;
+
+    /// <summary>
+    /// The skill group of the career's normal attack. Some careers name a normal-attack row the game data does not have (Acolyte line: 1200001);
+    /// the client then derives the group from the row id (group = id / 100, as ids are group * 100 + level), so do the same.
+    /// </summary>
+    private int NormalGroup(int career) =>
+        NormalAttack(career) is var id && data.Row("SkillConfig", id) is { } row ? (int)GameData.Int(row, "_iSkillID") : id / 100;
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, HashSet<int>> _normalGroups = new();
+
+    /// <summary>
+    /// Every normal-attack group of a career chain: the client picks the "Ataque Básico" of its skill page from JobAttackConfig by the weapon
+    /// in hand (the 2300 line swings 1000001 bare-handed and 1299901 with a mace), so a plan that lists only JobConfig's attack leaves the
+    /// shown one at level 0 with a "+" that can never be confirmed. All of them are known from level 1, like the career's own.
+    /// </summary>
+    private HashSet<int> NormalGroups(int career) => _normalGroups.GetOrAdd(career, c =>
+    {
+        var chain = CareerChain(c);
+        var groups = chain.Select(NormalGroup).Where(g => g > 0).ToHashSet();
+        foreach (var row in data.Table("JobAttackConfig").Values)
+            if (chain.Contains((int)GameData.Int(row, "_iJobID")) && GameData.Int(row, "_iSkillID") is var id and > 0)
+                groups.Add(data.Row("SkillConfig", id) is { } skill ? (int)GameData.Int(skill, "_iSkillID") : (int)(id / 100));
+        return groups;
+    });
 
     internal int Rank(int career) => (int)(data.Row("JobConfig", career) is { } job ? Math.Max(1, GameData.Int(job, "_iJobRank")) : 1);
 
@@ -130,6 +158,13 @@ public sealed class SkillService
             if (points.ContainsKey(rank) && p.Skills.TryGetValue(group, out int level))
                 points[rank] -= Math.Max(0, level - Initial(p, group));
         }
+        if (options.Value.SharedSkillPoints)
+        {
+            // One pool: what is left in any class pays for a skill of any class of the tree. The client reads the remaining points of
+            // the tab it is showing, so every rank reports the whole pool; a negative total is an overspend (refused by the caller).
+            int pool = points.Values.Sum();
+            foreach (int rank in points.Keys.ToList()) points[rank] = pool;
+        }
         return points;
     }
 
@@ -137,8 +172,7 @@ public sealed class SkillService
     public int Level(RoleProgress p, int group)
     {
         int initial = InTree(p.Career, group) ? Initial(p, group) : 0;
-        if (data.Row("SkillConfig", NormalAttack(p.Career)) is { } atk && GameData.Int(atk, "_iSkillID") == group)
-            initial = Math.Max(1, initial);
+        if (NormalGroups(p.Career).Contains(group)) initial = Math.Max(1, initial);
         int saved = p.Skills.GetValueOrDefault(group);
         foreach (var (old, replacement) in Replacements(p.Career))
             if (replacement == group) saved = Math.Max(saved, p.Skills.GetValueOrDefault(old));
@@ -149,11 +183,12 @@ public sealed class SkillService
     {
         var p = session.Progress!;
         int atk = NormalAttack(p.Career);
-        int atkGroup = data.Row("SkillConfig", atk) is { } a ? (int)GameData.Int(a, "_iSkillID") : 0;
+        int atkGroup = NormalGroup(p.Career);
         var tree = Tree(p.Career);
         var skillData = new DBSkillData { MaxPlanCount = PlanCount, CurrentPlanIndex = 0, CurrentAtkSkillId = atk };
+        var normals = NormalGroups(p.Career);
         if (atkGroup > 0) skillData.SkillList.Add(atkGroup);
-        skillData.SkillList.Add(tree.Select(t => t.Group).Where(g => g != atkGroup).Distinct());
+        skillData.SkillList.Add(normals.Where(g => g != atkGroup).Concat(tree.Select(t => t.Group)).Where(g => g != atkGroup).Distinct());
 
         var plan = new SkillPlan { IsUnlock = true };
         foreach (int group in skillData.SkillList)
@@ -168,7 +203,7 @@ public sealed class SkillService
             var blank = new SkillPlan { IsUnlock = true };
             foreach (int group in skillData.SkillList)
                 blank.SkillAssigns[group] = new SkillData { SkillId = group,
-                    SkillLevel = group == atkGroup ? 1 : Initial(p, group) };
+                    SkillLevel = normals.Contains(group) ? 1 : Initial(p, group) };
             blank.SkillQueue[0] = new SkillData(); // paired by the client even in a fresh plan.
             blank.ManualLoadSkill.Add(new SkillData());
             blank.AutoLoadSkill.Add(new SkillData());
@@ -375,7 +410,8 @@ public sealed class SkillService
             }
             foreach (int group in generated.SkillList)
                 if (!plan.SkillAssigns.ContainsKey(group))
-                    plan.SkillAssigns[group] = new SkillData { SkillId = group, SkillLevel = Initial(session.Progress!, group) };
+                    plan.SkillAssigns[group] = new SkillData { SkillId = group,
+                        SkillLevel = IsNormalGroup(session.Progress!, group) ? 1 : Initial(session.Progress!, group) };
             var preview = CharacterService.GenreCloneProgress(session.Progress!);
             preview.Skills.Clear();
             foreach (int group in generated.SkillList)
@@ -435,7 +471,7 @@ public sealed class SkillService
         RealId(group, 1) is var id and > 0 && data.Row("SkillConfig", id) is { } row && GameData.Int(row, "_iBasicType") == 1;
 
     private bool IsNormalGroup(RoleProgress p, int group) =>
-        data.Row("SkillConfig", NormalAttack(p.Career)) is { } row && GameData.Int(row, "_iSkillID") == group;
+        NormalGroups(p.Career).Contains(group);
 
     public async Task SyncAsync(GameSession session)
     {
@@ -453,7 +489,7 @@ public sealed class SkillService
         // BuildFresh stores normal attacks in plans, but Level grants the current attack implicitly.
         // Ignore those from the current career chain when an older plan is selected after a job change.
         var normalAttacks = CareerChain(progress.Career)
-            .Select(c => data.Row("SkillConfig", NormalAttack(c)) is { } row ? (int)GameData.Int(row, "_iSkillID") : 0)
+            .SelectMany(c => NormalGroups(c))
             .Where(group => group > 0).ToHashSet();
         progress.Skills.Clear();
         foreach (var (group, assignment) in source.SkillAssigns)
@@ -522,7 +558,7 @@ public sealed class SkillService
 
     /// <summary>Shared gate for direct skill switches and Build-window child switches.</summary>
     internal int PlanSwitchCooldownError(GameSession session) => InCombat(session) ? ErrorCodes.Parameter
-        : DateTime.UtcNow - session.SkillPlanSwitchUtc < TimeSpan.FromSeconds(Parameter("SchemeCD", 3))
+        : DateTime.UtcNow - session.SkillPlanSwitchUtc < TimeSpan.FromSeconds(options.Value.PresetSwitchCooldown)
             ? ErrorCodes.Cooldown : 0;
 
     /// <summary>Run skill-change observers after a combined Build transaction releases the character lock.</summary>
@@ -681,8 +717,8 @@ public sealed class SkillService
         else if (code == 0)
         {
             int learned = Level(p, group);
-            if (group <= 0 || learned <= 0 || !IsActive(group)
-                || (IsNormalGroup(p, group) && p.Career != 1000)
+            // Normal attacks may sit on the bar too (a derived group has no SkillConfig row, so it cannot be checked for _iBasicType).
+            if (group <= 0 || learned <= 0 || !(IsActive(group) || IsNormalGroup(p, group))
                 || req.Info!.SkillLevel < 1 || req.Info.SkillLevel > learned
                 || op == 1 && target < loadList.Count && loadList[target].SkillId > 0
                     && loadList[target].SkillId != group

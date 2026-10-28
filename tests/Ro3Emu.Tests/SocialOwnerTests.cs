@@ -299,7 +299,7 @@ public sealed class SocialOwnerTests : IAsyncLifetime
         {
             var reply = await Call(method, args);
             Assert.False(Ok(reply), method);
-            Assert.Equal("no selected role", Message(reply));
+            Assert.Equal("not verified", Message(reply)); // the router's sign-in gate (upstream #37), before any service
         }
         foreach (var (method, uid, field) in new[]
         {

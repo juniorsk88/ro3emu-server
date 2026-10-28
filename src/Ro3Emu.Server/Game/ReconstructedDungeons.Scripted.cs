@@ -24,9 +24,12 @@ public sealed partial class ReconstructedDungeons
     /// One scripted step. <paramref name="Story"/> is a PlotInterpretation id the client plays at the step's start
     /// (0: none); <paramref name="TeleportAfter"/> a scene-editor point the participants are moved to when it
     /// completes (0: none). <paramref name="Goal"/> is the tracker's "(done/total)" while the step runs.
+    /// <paramref name="Guide"/> are scene-editor guide points (m_kGuidePoints) the client draws as a line on the floor
+    /// while the step runs (dungeon var PGuideWayList), null for none.
     /// </summary>
     public sealed record ScriptedStep(string Stage, int Quest, (int Done, int Total) Goal, IReadOnlyList<SceneActor> Actors,
-        long Story, IReadOnlyList<StepTrigger> Complete, IReadOnlyList<StepTrigger> Ignore, long TeleportAfter);
+        long Story, IReadOnlyList<StepTrigger> Complete, IReadOnlyList<StepTrigger> Ignore, long TeleportAfter,
+        IReadOnlyList<long>? Guide = null);
 
     /// <summary>
     /// A scene. <paramref name="Unplayed"/> are DungeonQuestConfig quests of the scene that no step shows: the branch
@@ -70,7 +73,8 @@ public sealed partial class ReconstructedDungeons
         if (complete.Count == 0) throw new InvalidOperationException($"Scripted step '{s.GetProperty("stage").GetString()}' cannot complete.");
         return new ScriptedStep(s.GetProperty("stage").GetString() ?? "", s.GetProperty("quest").GetInt32(), goal, actors,
             s.TryGetProperty("story", out var story) ? story.GetInt64() : 0, complete, Triggers(s, "ignore"),
-            s.TryGetProperty("after", out var after) && after.TryGetProperty("teleport", out var to) ? to.GetInt64() : 0);
+            s.TryGetProperty("after", out var after) && after.TryGetProperty("teleport", out var to) ? to.GetInt64() : 0,
+            s.TryGetProperty("guide", out var guide) ? guide.EnumerateArray().Select(v => v.GetInt64()).ToArray() : null);
     }
 
     private static IReadOnlyList<StepTrigger> Triggers(JsonElement step, string field)

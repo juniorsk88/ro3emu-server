@@ -13,7 +13,8 @@ namespace Ro3Emu.Server.Game;
 /// monster, for that monster (AreaConcurMonsterConfig: kills = curScore, "(Kills: N)"), and rolls the area's drop
 /// (_iAreaDropAward: Hunt Medals and region points). The counters ride the kill's own transaction (RewardService
 /// StageHuntKill). 83623 claims a monster's reached stages, 83622 one area stage once enough monster stages are
-/// claimed in the area (the client's red-dot rule, LC_System_MonsterCrusadeRedDot.lua:40-110); claims are their own
+/// REACHED in the area (the Area Prize panel's rule, GetAreaAchievedAwardCount; the red dot counts claimed ones instead,
+/// LC_System_MonsterCrusadeRedDot.lua:40-110, but the button the player presses uses the reached count); claims are their own
 /// cd13e/monsterhunt-award receipts. 5053 DBAreaConcurInfo shows it all; the role blob is "area_concur".
 /// (inferred) The killer alone gets credit, as for the kill's loot; area and map scores have no reset.
 /// </summary>
@@ -174,6 +175,24 @@ public sealed class MonsterHuntService
         return Math.Min(count, GameData.Int(area, "_iAreaLimit"));
     }
 
+    /// <summary>
+    /// The area's monster stages the kills have reached, claimed or not, capped at _iAreaLimit: the number the Area Prize panel
+    /// shows ("12/186", LC_MonsterCrusadeHelper.GetAreaAchievedAwardCount) and the one its "Claim" button compares with each
+    /// stage's threshold (UI_Sys_MonsterCrusade_AwardPrevieListLWidgetCtrl). The first version asked for stages already
+    /// CLAIMED, so a player with 12 reached and 6 claimed saw the button enabled and the server paid nothing, silently.
+    /// </summary>
+    private long AchievedInArea(DBAreaConcurInfo state, long areaId, JsonElement area)
+    {
+        long count = 0;
+        foreach (var row in Rows("AreaConcurMonsterConfig"))
+        {
+            if (areaOfMap.GetValueOrDefault(GameData.Int(row, "_iMap")) != areaId) continue;
+            long kills = state.MonsterInfo.GetValueOrDefault(GameData.Int(row, "_iID"))?.CurScore ?? 0;
+            count += Stages(row, "_kMonsterAward").Count(t => kills >= t.Need);
+        }
+        return Math.Min(count, GameData.Int(area, "_iAreaLimit"));
+    }
+
     /// <summary>83623: every requested stage the monster's kills reach and that is not claimed yet (the client sends them all).</summary>
     public async Task ClaimMonsterAsync(GameSession s, AreaConcurGainMonsterAwardReq req)
     {
@@ -213,7 +232,7 @@ public sealed class MonsterHuntService
             var state = s.AreaConcur;
             if (state != null && Area(req.AreaId) is { } area && AreaOpen(s, area))
             {
-                long progress = ClaimedInArea(state, req.AreaId, area);
+                long progress = AchievedInArea(state, req.AreaId, area);
                 var claimed = state.AreaInfo.GetValueOrDefault(req.AreaId)?.ClaimedAward;
                 var stages = Stages(area, "_kAreaStageAward")
                     .Where(t => req.StageIds.GetValueOrDefault(t.Stage) && progress >= t.Need && claimed?.GetValueOrDefault(t.Stage) != true).ToArray();
@@ -221,7 +240,7 @@ public sealed class MonsterHuntService
                 {
                     var next = state.Clone();
                     if (!next.AreaInfo.TryGetValue(req.AreaId, out var info)) next.AreaInfo[req.AreaId] = info = new AreaConcurAreaInfo();
-                    info.CurScore = progress;
+                    info.CurScore = ClaimedInArea(next, req.AreaId, area);
                     foreach (var t in stages) info.ClaimedAward[t.Stage] = true;
                     await CommitClaimAsync(s, next, stages.Select(t => t.Award).ToArray(),
                         $"area/{req.AreaId}/{string.Join(",", stages.Select(t => t.Stage))}");

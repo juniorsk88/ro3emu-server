@@ -376,13 +376,18 @@ public sealed partial class TaskService
         if (settlement.TaskParticipantIds == null)
         {
             var credited = _participants.TryGetValue(monster, out var ids) ? ids : [];
+            var party = PartyShare(killer);
             settlement.TaskParticipantIds = sessions.All()
                 .Where(s => s.Role != null && s.Tasks != null && s.WorldScene == monster.WorldScene &&
-                    (ReferenceEquals(s, killer) || credited.Contains(s.Role.Id)))
+                    (ReferenceEquals(s, killer) || credited.Contains(s.Role.Id) || party.Contains(s.Role.Id)))
                 .Select(s => s.Role!.Id).Distinct().Order().ToArray();
         }
         return settlement.TaskParticipantIds.Select(id => ReservationKey.Role(id)).ToArray();
     }
+
+    /// <summary>Roles of the killer's party who share its kill (Ro3Emu:PartyKillShare): they get the same quest credit as the killer.</summary>
+    private HashSet<long> PartyShare(GameSession killer) =>
+        (character.KillSharers?.Invoke(killer) ?? []).Where(s => s.Role != null).Select(s => s.Role!.Id).ToHashSet();
 
     /// <summary>Freeze the exact running targets under all participant role reservations before the kill writer
     /// starts. A later task acceptance cannot consume this already committed occurrence.</summary>
@@ -392,6 +397,7 @@ public sealed partial class TaskService
         if (killer.Role == null) throw new InvalidOperationException("Kill task source has no killer role.");
         var context = killer.Owners?.Current ?? throw new InvalidOperationException("Kill task progress requires its owner.");
         var candidates = settlement.TaskParticipantIds ?? throw new InvalidOperationException("Kill task roles were not reserved.");
+        var party = PartyShare(killer);
         var frozen = new List<(long Role, byte[]? BeforeTasks, byte[] AfterTasks)>();
         var applied = new List<(GameSession Session, object? Attachment, DBTaskInfo Tasks)>();
         foreach (long role in candidates)
@@ -411,10 +417,10 @@ public sealed partial class TaskService
                     var target = def.Targets[index];
                     bool matches = target[0] switch
                     {
-                        TKill => ReferenceEquals(session, killer) && target.Length >= 3 && target[1..^1].Contains(monster.Template.NpcId),
+                        TKill => (ReferenceEquals(session, killer) || party.Contains(role)) && target.Length >= 3 && target[1..^1].Contains(monster.Template.NpcId),
                         TKillInvolved => target.Length >= 3 && target[1..^1].Contains(monster.Template.NpcId),
                         TMapKill => target.Length == 3 && target[1] == monster.SceneEntry,
-                        TKillOnMap => ReferenceEquals(session, killer) && target.Length == 3 && target[2] == monster.SceneEntry,
+                        TKillOnMap => (ReferenceEquals(session, killer) || party.Contains(role)) && target.Length == 3 && target[2] == monster.SceneEntry,
                         _ => false
                     };
                     if (!matches) continue;
@@ -469,6 +475,8 @@ public sealed partial class TaskService
     {
         var participants = _participants.TryGetValue(monster, out var credited) ? credited.ToHashSet() : new HashSet<long>();
         if (killer.Role != null) participants.Add(killer.Role.Id);
+        var party = PartyShare(killer);
+        participants.UnionWith(party);
         _participants.Remove(monster);
         if (monster.RewardSettlement?.TaskObligationsStaged == true)
         {
@@ -480,10 +488,10 @@ public sealed partial class TaskService
         await RoleFanout.EachAsync(sessions.All().Where(s => s.Role != null && s.WorldScene == monster.WorldScene && participants.Contains(s.Role.Id)),
             s => ProgressAsync(s, null, t => t[0] switch
             {
-                TKill when s == killer && t.Length >= 3 && t[1..^1].Contains(monster.Template.NpcId) => 1,
+                TKill when (s == killer || party.Contains(s.Role!.Id)) && t.Length >= 3 && t[1..^1].Contains(monster.Template.NpcId) => 1,
                 TKillInvolved when t.Length >= 3 && t[1..^1].Contains(monster.Template.NpcId) => 1,
                 TMapKill when t.Length == 3 && t[1] == monster.SceneEntry => 1,
-                TKillOnMap when s == killer && t.Length == 3 && t[2] == monster.SceneEntry => 1,
+                TKillOnMap when (s == killer || party.Contains(s.Role!.Id)) && t.Length == 3 && t[2] == monster.SceneEntry => 1,
                 _ => 0,
             }));
     }

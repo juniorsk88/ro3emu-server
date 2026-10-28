@@ -43,11 +43,42 @@ public sealed class CardEffects
         /// <summary>Last registered buff GUID per (card GUID, config), to carry BuffEffectCds over a re-registration.</summary>
         public readonly Dictionary<(long Source, int Config), long> Registered = new();
         public readonly Dictionary<long, long> Cooldowns = new(); // proc family (base buff group) -> ready at
+        public long NextHitUntil, NextHitBp; // "your next instance of damage is increased" after a critical hit
     }
 
     private sealed record Passive(InvItem Card, int Id, JsonElement Row);
 
     private const int LifeStealGroup = 20170, SpAbsorb = 2050401, SizeAlways = 20501, SizeChance = 20500;
+    private const int DoubleAttack = 20210, CooldownReset = 20529, MagicNullify = 20510;
+    private const int SplashChance = 20508, SplashAlways = 20509, NextHitAfterCrit = 20507, ImmuneSlow = 20525, ImmuneStun = 20527, Endure = 20523;
+    private const int DivineLight = 20531, ReflectMagic = 20512, ReflectMagicVit = 20513, ReflectPhysical = 20516, ReflectPhysicalVit = 20517;
+    private static readonly int[] AutocastGroups = [20190, 20200]; // Bash, Jupitel Thunder (the chance rides on the card's modifier row)
+
+    /// <summary>Buff groups by their English name (the status immunities and Endure act on these).</summary>
+    private readonly Lazy<Dictionary<string, HashSet<int>>> groupsByName;
+    private bool Named(string name, int group) => groupsByName.Value.TryGetValue(name, out var set) && set.Contains(group);
+
+    /// <summary>Armor element cards (buff group -> EleConfig element): Earth 3, Water 5, Wind 2, Poison 6, Fire 4, Ghost 9, Holy 7.</summary>
+    private static readonly Dictionary<long, int> ArmorElements = new()
+        { [20090] = 3, [20100] = 5, [20110] = 2, [20120] = 6, [20130] = 4, [20140] = 9, [20515] = 7 };
+
+    /// <summary>"Damage against all Orcs / Kobolds / Kara Crabs / Shellfish / Aster / Goblins +X%": group -> does this monster's name belong. (inferred)
+    /// The data has no family field (NPCConfig._iRace is the race class), so the family is read from the monster's name.</summary>
+    private static readonly Dictionary<long, Func<string, bool>> RaceGroups = new()
+    {
+        [20150] = n => System.Text.RegularExpressions.Regex.IsMatch(n, @"\bOrc\b|Zenorc") && !n.Contains("Lord") && !n.Contains("Hero")
+            && !n.Contains("Skeleton") && !n.Contains("Zombie"),
+        [20220] = n => n.Contains("Kobold"),
+        [20270] = n => n == "Crab" || n.Contains("Kara Crab"),
+        [20280] = n => n.Contains("Shellfish"),
+        [20290] = n => n == "Aster",
+        [20532] = n => n.Contains("Goblin"),
+    };
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, string> monsterNames = new();
+    private string MonsterName(int npcId) => monsterNames.GetOrAdd(npcId, id => data.Row("NPCConfig", id) is { } row ? data.TextOf(row, "_kName") : "");
+
+    private readonly CombatService combat;
 
     // A test can fix each ten-thousandth roll without changing the production probability.
     internal Func<int, int> Roll { get; set; } = bound => Random.Shared.Next(bound);
@@ -58,10 +89,26 @@ public sealed class CardEffects
         this.data = data;
         this.character = character;
         this.buffs = buffs;
+        this.combat = combat;
+        groupsByName = new(() =>
+        {
+            var map = new Dictionary<string, HashSet<int>>();
+            foreach (var row in data.Table("BuffConfig").Values)
+                if (GameData.Int(row, "_iBuffID") is var g and > 0 && data.TextOf(row, "_iName") is { Length: > 0 } name)
+                    (map.TryGetValue(name, out var set) ? set : map[name] = []).Add((int)g);
+            return map;
+        });
+        buffs.Refuses = RefusesBuff;
+        combat.HealedAsync.Add(OnHealedAsync);
+        combat.PvpHitTaken.Add(OnPvpHitTakenAsync);
         cards.SocketsChanged.Add(RefreshAsync);
         scenes.Loaded.Add(RefreshAsync);
         combat.DamageAdjusters.Add(AdjustDamage);
         combat.DealtAsync.Add(OnDealtAsync);
+        combat.ExtraHitDamage.Add(ExtraHit);
+        combat.SkillCooldownStarted.Add(OnCooldownStartedAsync);
+        combat.IncomingHitNegators.Add(NegateMagicHit);
+        combat.ArmorElementOf = ArmorElement;
     }
 
     private IEnumerable<Passive> Passives(GameSession s)
@@ -189,21 +236,211 @@ public sealed class CardEffects
             var stats = character.Stats(s);
             await character.SetHpSpAsync(s, null, stats[2001] + sp);
         }
+        await SplashAndAutocastAsync(s, target, skillRow, damage, passives);
     }
 
     /// <summary>"Ignores monster Size. Damage against Small, Medium, and Large monsters +X%" (2050101..4 always,
-    /// 2050001..4 with a chance). Size 0 monsters are unaffected (inferred from the three named sizes).</summary>
+    /// 2050001..4 with a chance; size 0 monsters are unaffected, inferred from the three named sizes) and the family bonuses
+    /// ("Damage against all Orcs +X%", RaceGroups): all add up (basis points).</summary>
     internal long AdjustDamage(GameSession s, MonsterUnit target, JsonElement skillRow, DamageHitResult result, long damage)
     {
-        if (damage <= 0 || target.Template.Size is < 1 or > 3) return damage;
+        if (damage <= 0) return damage;
         long bonus = 0;
+        var state = runtime.GetOrCreateValue(s);
+        long now = MonsterService.NowMs;
+        lock (state)
+        {
+            if (state.NextHitUntil > now) bonus += state.NextHitBp; // armed by the last critical hit: this instance of damage
+            state.NextHitUntil = 0;
+        }
+        bool sized = target.Template.Size is >= 1 and <= 3;
+        string? name = null;
         foreach (var passive in Passives(s).DistinctBy(p => (p.Card.Guid, p.Id)))
         {
             long group = GameData.Int(passive.Row, "_iBuffID");
             var logic = Numbers(passive.Row, "_kLogicData");
-            if (group == SizeAlways && logic.Length >= 1) bonus += logic[0];
-            else if (group == SizeChance && logic.Length >= 2 && Roll(10000) < logic[0]) bonus += logic[1];
+            if (sized && group == SizeAlways && logic.Length >= 1) bonus += logic[0];
+            else if (sized && group == SizeChance && logic.Length >= 2 && Roll(10000) < logic[0]) bonus += logic[1];
+            else if (group == NextHitAfterCrit && result == DamageHitResult.Critical && logic.Length >= 2 && Description(passive.Row) is { Length: >= 1 } crit)
+                lock (state) { state.NextHitUntil = now + logic[1]; state.NextHitBp = (long)(crit[0] * 100); }
+            else if (RaceGroups.TryGetValue(group, out var belongs) && logic.Length >= 1 && belongs(name ??= MonsterName(target.Template.NpcId))) bonus += logic[0];
         }
         return bonus <= 0 ? damage : damage + (long)Math.Floor(damage * bonus / 10000d);
+    }
+
+    /// <summary>"Melee Basic Attacks (have a @{1}% Chance to) trigger a Splash effect within a @{2}-meter radius ... Affects up to @{3} Extra
+    /// targets, with damage reduced to @{4}% of the original. Internal Cooldown: @{5} seconds." (groups 20508 with a chance, 20509 always) and
+    /// the autocast cards: "When making a Physical attack, has a ${1}% Chance to autocast Bash / Jupitel Thunder Lv. @{1}. Internal Cooldown ${2}".</summary>
+    private async Task SplashAndAutocastAsync(GameSession s, MonsterUnit target, JsonElement skillRow, long damage, List<Passive> passives)
+    {
+        bool magic = GameData.Int(skillRow, "_iDmgType") == 2;
+        if (magic) return;
+        bool melee = GameData.Int(skillRow, "_iIsNormalAtk") == 1 && GameData.Int(skillRow, "_iDistanceType") != 2;
+        foreach (var passive in passives.DistinctBy(p => (p.Card.Guid, p.Id)))
+        {
+            long group = GameData.Int(passive.Row, "_iBuffID");
+            var desc = Description(passive.Row);
+            if (melee && group == SplashChance && desc.Length >= 5 && Numbers(passive.Row, "_kLogicData") is { Length: >= 1 } logic)
+            {
+                if (Roll(10000) < logic[0] && Ready(s, group, (long)(desc[4] * 1000))) await Splash(s, target, desc[1], (int)desc[2], desc[3], damage);
+            }
+            else if (melee && group == SplashAlways && desc.Length >= 4)
+            {
+                if (Ready(s, group, (long)(desc[3] * 1000))) await Splash(s, target, desc[0], (int)desc[1], desc[2], damage);
+            }
+        }
+        // Autocast: the modifier row (…01) of Bash / Jupitel Thunder names the base group in _kBuffAttributeList and the skill in its description link.
+        foreach (var passive in passives.DistinctBy(p => (p.Card.Guid, p.Id)))
+        {
+            long chance = ChanceModifiers(passive.Row).Where(m => AutocastGroups.Contains((int)m.Group)).Sum(m => m.Value);
+            int skillRow2 = AutocastSkill(passive.Row);
+            if (chance <= 0 || skillRow2 <= 0 || Description(passive.Row) is not { Length: >= 2 } desc) continue;
+            long family = ChanceModifiers(passive.Row).First(m => AutocastGroups.Contains((int)m.Group)).Group;
+            if (Roll(10000) >= chance || !Ready(s, family, (long)(desc[1] * 1000)) || target.Dead || target.Hp <= 0) continue;
+            await combat.AutocastOnMonsterAsync(s, target, skillRow2);
+        }
+    }
+
+    private async Task Splash(GameSession s, MonsterUnit target, double radius, int count, double percent, long damage)
+    {
+        long amount = (long)Math.Floor(damage * percent / 100);
+        if (amount <= 0 || count <= 0) return;
+        foreach (var other in combat.MonstersAround(s, target, (float)radius, count))
+            await combat.HitMonsterAsync(s, other, amount, 0);
+    }
+
+    /// <summary>The skill row an autocast card names: the digits of its description's skill link ("skill/2002801") plus the level
+    /// (last numeric description parameter) minus one, since the link is the level-1 row.</summary>
+    private static int AutocastSkill(JsonElement row)
+    {
+        if (!row.TryGetProperty("_iDescription", out var list) || list.ValueKind != JsonValueKind.Array) return 0;
+        int id = 0, level = 1;
+        foreach (var part in list.EnumerateArray().Skip(1))
+        {
+            string text = part.ValueKind == JsonValueKind.String ? part.GetString() ?? "" : part.ToString();
+            int at = text.IndexOf("skill/", StringComparison.Ordinal);
+            if (at >= 0 && int.TryParse(new string(text[(at + 6)..].TakeWhile(char.IsDigit).ToArray()), out int linked)) id = linked;
+            else if (!text.StartsWith('<') && int.TryParse(text, out int lv)) level = lv;
+        }
+        return id > 0 ? id + Math.Max(0, level - 1) : 0;
+    }
+
+    /// <summary>"When applying a healing skill effect, has a ${1}% Chance to trigger Divine Light Lv@{1}. Internal Cooldown: ${2} seconds."
+    /// (group 20531, _kLogicData [chance bp, skill row]): Divine Light on the nearest monster within 8 m of the healer.</summary>
+    private async Task OnHealedAsync(GameSession s, long healed)
+    {
+        if (s.Role == null || s.Dead) return;
+        foreach (var passive in Passives(s).Where(p => GameData.Int(p.Row, "_iBuffID") == DivineLight).DistinctBy(p => (p.Card.Guid, p.Id)).ToList())
+        {
+            var logic = Numbers(passive.Row, "_kLogicData");
+            var desc = Description(passive.Row);
+            if (logic.Length < 2 || desc.Length < 2 || Roll(10000) >= logic[0] || !Ready(s, DivineLight, (long)(desc[1] * 1000))) continue;
+            if (combat.NearestMonster(s, 8) is { } near) await combat.AutocastOnMonsterAsync(s, near, (int)logic[1]);
+            return;
+        }
+    }
+
+    /// <summary>"When hit by a player's ST magic/Physical skill, reflects @{1}% of the damage taken, up to @{2}% of the attacker's Max Life. (For
+    /// every @{3} VIT, reflects an Extra @{4}% ..., up to @{5}%.) Internal Cooldown: seconds." (groups 20512/20513 magic, 20516/20517 physical;
+    /// single-target skills only). _kDescData is [pct, cap%, cd] or [pct, cap%, vit step, extra pct, extra cap%, cd].</summary>
+    private async Task OnPvpHitTakenAsync(GameSession attacker, GameSession target, JsonElement row, long damage)
+    {
+        if (damage <= 0 || target.Role == null || GameData.Int(row, "_iRangeType") == 2) return;
+        bool magic = GameData.Int(row, "_iDmgType") == 2;
+        foreach (var passive in Passives(target).DistinctBy(p => (p.Card.Guid, p.Id)).ToList())
+        {
+            long group = GameData.Int(passive.Row, "_iBuffID");
+            bool plain = group == (magic ? ReflectMagic : ReflectPhysical), withVit = group == (magic ? ReflectMagicVit : ReflectPhysicalVit);
+            var desc = Description(passive.Row);
+            if (!(plain && desc.Length >= 3 || withVit && desc.Length >= 6)) continue;
+            double percent = desc[0], cap = desc[1];
+            long cooldown = (long)((plain ? desc[2] : desc[5]) * 1000);
+            if (withVit && desc[2] > 0)
+            {
+                long vit = character.Stats(target)[3]; // VIT
+                percent = Math.Min(desc[4], percent + Math.Floor(vit / desc[2]) * desc[3]); // the extra reflect share, up to desc[4]%
+            }
+            if (!Ready(target, group, cooldown)) continue;
+            long maxHp = character.Stats(attacker)[101];
+            long amount = Math.Min((long)Math.Floor(damage * percent / 100), (long)Math.Floor(maxHp * cap / 100));
+            await combat.ReflectToPlayerAsync(attacker, target, amount);
+            return;
+        }
+    }
+
+    /// <summary>Immune to Slow / Immune to Stun / Endure (immune to knockback): the card refuses those buffs from other sources.</summary>
+    private bool RefusesBuff(GameSession s, int group)
+    {
+        bool stun = Named("Stun", group), slow = Named("Slow", group), knock = Named("Knockback", group);
+        if (!stun && !slow && !knock) return false;
+        foreach (var passive in Passives(s))
+        {
+            long g = GameData.Int(passive.Row, "_iBuffID");
+            if (stun && g == ImmuneStun || slow && g == ImmuneSlow || knock && g == Endure) return true;
+        }
+        return false;
+    }
+
+    /// <summary>"Basic Attack has a @{1}% Chance to trigger Double Attack, dealing Extra Neutral melee Physical damage equal to @{2}%.
+    /// Internal Cooldown: @{3} sec." (group 20210; the chance comes from the card's own modifier row, the other two numbers are read from
+    /// its description). The extra hit is that share of the hit just dealt. (inferred)</summary>
+    internal long ExtraHit(GameSession s, MonsterUnit target, JsonElement skillRow, long damage)
+    {
+        if (damage <= 0 || s.Role == null || GameData.Int(skillRow, "_iIsNormalAtk") != 1 || GameData.Int(skillRow, "_iDmgType") == 2
+            || GameData.Int(skillRow, "_iDistanceType") == 2) return 0;
+        foreach (var passive in Passives(s).DistinctBy(p => (p.Card.Guid, p.Id)))
+        {
+            long chance = ChanceModifiers(passive.Row).Where(m => m.Group == DoubleAttack).Sum(m => m.Value);
+            if (chance <= 0 || DescriptionNumbers(passive.Row) is not { Length: >= 3 } text) continue;
+            if (Roll(10000) >= chance || !Ready(s, DoubleAttack, (long)(text[2] * 1000))) continue;
+            return (long)Math.Floor(damage * text[1] / 100);
+        }
+        return 0;
+    }
+
+    /// <summary>_iDescription [text id, p1, p2...] as numbers (p1..).</summary>
+    private static double[] DescriptionNumbers(JsonElement row) => row.TryGetProperty("_iDescription", out var list) && list.ValueKind == JsonValueKind.Array
+        ? list.EnumerateArray().Skip(1).Select(v => GameData.Number(v) ?? 0).ToArray() : [];
+
+    /// <summary>"After using a skill, has a @{1}% Chance to reset that skill's Cooldown. Its Cooldown cannot be reset again for a period of
+    /// time: @{2} times that skill's Cooldown. (Does not reset the global Cooldown.)" (group 20529, _kLogicData [chance bp, ...])</summary>
+    internal async Task OnCooldownStartedAsync(GameSession s, JsonElement row)
+    {
+        if (s.Role == null || s.Dead || GameData.Int(row, "_iIsNormalAtk") == 1) return;
+        long cooldown = GameData.Int(row, "_iCD");
+        if (cooldown <= 0) return;
+        int group = (int)GameData.Int(row, "_iSkillID");
+        foreach (var passive in Passives(s).Where(p => GameData.Int(p.Row, "_iBuffID") == CooldownReset).DistinctBy(p => (p.Card.Guid, p.Id)).ToList())
+        {
+            var logic = Numbers(passive.Row, "_kLogicData");
+            var desc = Description(passive.Row);
+            if (logic.Length < 1 || desc.Length < 2 || Roll(10000) >= logic[0]) continue;
+            if (!Ready(s, 1_000_000_000L + group, (long)(desc[1] * cooldown))) continue;
+            await combat.ResetCooldownAsync(s, group);
+            return;
+        }
+    }
+
+    /// <summary>"When hit by a magic attack, has a @{1}% Chance to nullify its damage. Internal Cooldown: @{2} seconds." (group 20510)</summary>
+    internal bool NegateMagicHit(GameSession s, bool magic)
+    {
+        if (!magic || s.Role == null) return false;
+        foreach (var passive in Passives(s).Where(p => GameData.Int(p.Row, "_iBuffID") == MagicNullify).DistinctBy(p => (p.Card.Guid, p.Id)))
+        {
+            var logic = Numbers(passive.Row, "_kLogicData");
+            var desc = Description(passive.Row);
+            if (logic.Length < 1 || desc.Length < 2 || Roll(10000) >= logic[0] || !Ready(s, MagicNullify, (long)(desc[1] * 1000))) continue;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>"Changes armor property to Earth/Water/Wind/Poison/Fire/Ghost/Holy" (groups 20090..20140, 20515): the element monsters
+    /// hit this role's armor with; 0 when no card changes it.</summary>
+    internal int ArmorElement(GameSession s)
+    {
+        foreach (var passive in Passives(s))
+            if (ArmorElements.TryGetValue(GameData.Int(passive.Row, "_iBuffID"), out int element)) return element;
+        return 0;
     }
 }

@@ -283,6 +283,133 @@ public sealed class CardRulesTests : IAsyncLifetime
     }
 
     [ClientDataFact]
+    public async Task FamilyDoubleAttackNullifyElementAndCooldownResetCardsWork()
+    {
+        const int orcs = 1430108, doubleAttack = 1440107, fireArmor = 1440305, nullify = 1450200, reset = 1460701;
+        await using var alice = await InWorld("Alice");
+        var session = Session("Alice");
+        var data = Service<GameData>();
+        var effects = Service<CardEffects>();
+        MonsterUnit Unit(string name, long uid)
+        {
+            int npc = (int)data.Table("NPCConfig").Values.Where(r => GameData.Int(r, "_iNPCType") == 1 && data.TextOf(r, "_kName") == name)
+                .Select(r => GameData.Int(r, "_iID")).First(id => Service<MonsterService>().Template((int)id) != null);
+            var template = Service<MonsterService>().Template(npc)!;
+            var point = new SpawnPoint(-1, 0, 0, 0, 0, npc);
+            return new MonsterUnit
+            {
+                Uid = uid, SceneEntry = session.SceneEntry, Template = template, Hp = template.MaxHp,
+                Group = new SpawnGroup(-1, false, 1, 0, [], [point]), Home = point,
+            };
+        }
+        var orc = Unit("Orc Warrior", 1L << 48);
+        var other = Unit("Poring", (1L << 48) + 1);
+        var normal = data.Row("SkillConfig", 1000001)!.Value;
+        var skill = data.Table("SkillConfig").Values.First(r => GameData.Int(r, "_iCD") > 0 && GameData.Int(r, "_iIsNormalAtk") != 1 && GameData.Int(r, "_iMode") == 0); // any skill with a cooldown
+        effects.Roll = _ => 0;
+        try
+        {
+            await Service<GameLoop>().InvokeAsync(async () =>
+            {
+                Assert.Equal(0, effects.ArmorElement(session));
+                Assert.False(effects.NegateMagicHit(session, true));
+                Assert.Equal(0, effects.ExtraHit(session, orc, normal, 1000));
+                int n = 1;
+                foreach (int card in new[] { orcs, doubleAttack, fireArmor, nullify, reset })
+                    session.Items.Add(new InvItem { Guid = 880100 + n, Entry = card, Stack = 1, Pack = 3, Grid = CharacterService.CardGrid(n++, 1) });
+                await effects.RefreshAsync(session);
+                Assert.Equal(10180, effects.AdjustDamage(session, orc, normal, DamageHitResult.Normal, 10000)); // all Orcs +1.8%
+                Assert.Equal(10000, effects.AdjustDamage(session, other, normal, DamageHitResult.Normal, 10000));
+                Assert.Equal(500, effects.ExtraHit(session, orc, normal, 1000)); // Double Attack: 50% of the hit
+                Assert.Equal(0, effects.ExtraHit(session, orc, normal, 1000)); // its internal cooldown
+                Assert.Equal(4, effects.ArmorElement(session)); // Fire
+                Assert.False(effects.NegateMagicHit(session, false));
+                Assert.True(effects.NegateMagicHit(session, true));
+                Assert.False(effects.NegateMagicHit(session, true)); // internal cooldown
+                int group = (int)GameData.Int(skill, "_iSkillID");
+                session.SkillCds[group] = MonsterService.NowMs + 60_000;
+                await effects.OnCooldownStartedAsync(session, skill);
+                Assert.False(session.SkillCds.ContainsKey(group)); // reset by the card
+                session.SkillCds[group] = MonsterService.NowMs + 60_000;
+                await effects.OnCooldownStartedAsync(session, skill);
+                Assert.True(session.SkillCds.ContainsKey(group)); // not again inside 3x its cooldown
+            });
+        }
+        finally { effects.Roll = bound => Random.Shared.Next(bound); }
+    }
+
+    [ClientDataFact]
+    public async Task ImmunityEndureAndNextHitAfterACritCardsWork()
+    {
+        const int immuneStun = 1460700, immuneSlow = 1460501, endure = 1460500, afterCrit = 1460103;
+        await using var alice = await InWorld("Alice");
+        var session = Session("Alice");
+        var data = Service<GameData>();
+        var effects = Service<CardEffects>();
+        var buffs = Service<BuffService>();
+        int StunBuff = 901601;
+        int SlowBuff = (int)data.Table("BuffConfig").Values.First(r => data.TextOf(r, "_iName") == "Slow").GetProperty("_iID").GetInt64();
+        int KnockBuff = (int)data.Table("BuffConfig").Values.First(r => data.TextOf(r, "_iName") == "Knockback").GetProperty("_iID").GetInt64();
+        var template = Service<MonsterService>().Template((int)data.Table("NPCConfig").Values.Where(r => GameData.Int(r, "_iNPCType") == 1)
+            .Select(r => GameData.Int(r, "_iID")).First(id => Service<MonsterService>().Template((int)id) != null))!;
+        var point = new SpawnPoint(-1, 0, 0, 0, 0, template.NpcId);
+        var monster = new MonsterUnit
+        {
+            Uid = 1L << 49, SceneEntry = session.SceneEntry, Template = template, Hp = template.MaxHp,
+            Group = new SpawnGroup(-1, false, 1, 0, [], [point]), Home = point,
+        };
+        var normal = data.Row("SkillConfig", 1000001)!.Value;
+        await Service<GameLoop>().InvokeAsync(async () =>
+        {
+            const long other = 777;
+            await buffs.AddAsync(session, StunBuff, 5000, other);
+            Assert.Contains(session.Buffs, b => b.ConfigId == StunBuff);
+            await buffs.RemoveAsync(session, session.Buffs.First(b => b.ConfigId == StunBuff));
+            int n = 1;
+            foreach (int card in new[] { immuneStun, immuneSlow, endure, afterCrit })
+                session.Items.Add(new InvItem { Guid = 880200 + n, Entry = card, Stack = 1, Pack = 3, Grid = CharacterService.CardGrid(n++, 1) });
+            await effects.RefreshAsync(session);
+            await buffs.AddAsync(session, StunBuff, 5000, other);
+            await buffs.AddAsync(session, SlowBuff, 5000, other);
+            await buffs.AddAsync(session, KnockBuff, 5000, other);
+            Assert.DoesNotContain(session.Buffs, b => b.ConfigId == StunBuff || b.ConfigId == SlowBuff || b.ConfigId == KnockBuff);
+            await buffs.AddAsync(session, StunBuff, 5000, session.Role!.Id); // the role's own buffs are never refused
+            Assert.Contains(session.Buffs, b => b.ConfigId == StunBuff);
+            // "When you land a critical hit, your next instance of damage is increased by 5%"
+            Assert.Equal(10000, effects.AdjustDamage(session, monster, normal, DamageHitResult.Normal, 10000));
+            effects.AdjustDamage(session, monster, normal, DamageHitResult.Critical, 10000);
+            Assert.Equal(10500, effects.AdjustDamage(session, monster, normal, DamageHitResult.Normal, 10000));
+            Assert.Equal(10000, effects.AdjustDamage(session, monster, normal, DamageHitResult.Normal, 10000)); // used up
+        });
+    }
+
+    [ClientDataFact]
+    public async Task WeaponMasteryPassivesFollowTheWeaponInHand()
+    {
+        await using var alice = await InWorld("Alice");
+        var session = Session("Alice");
+        var data = Service<GameData>();
+        var combat = Service<CombatService>();
+        // Sword Mastery (11009): op 16 [weapon subtype 2/3 sword, PATK 103, level value]
+        long sword = data.Table("ItemConfig").Values.First(r => GameData.Int(r, "_iType") == 5 && GameData.Int(r, "_iSubType") == 2).GetProperty("_iID").GetInt64();
+        long dagger = data.Table("ItemConfig").Values.First(r => GameData.Int(r, "_iType") == 5 && GameData.Int(r, "_iSubType") == 1).GetProperty("_iID").GetInt64();
+        var result = await Service<GameLoop>().InvokeAsync(() =>
+        {
+            session.Progress!.Skills[11009] = 5;
+            var without = combat.PassiveAttributes(session).Where(a => a.Id == 103).Sum(a => a.Value);
+            session.Items.Add(new InvItem { Guid = 880301, Entry = (int)dagger, Stack = 1, Pack = 2, Grid = 1 });
+            var withDagger = combat.PassiveAttributes(session).Where(a => a.Id == 103).Sum(a => a.Value);
+            session.Items.RemoveAll(i => i.Guid == 880301);
+            session.Items.Add(new InvItem { Guid = 880302, Entry = (int)sword, Stack = 1, Pack = 2, Grid = 1 });
+            var withSword = combat.PassiveAttributes(session).Where(a => a.Id == 103).Sum(a => a.Value);
+            session.Items.RemoveAll(i => i.Guid == 880302);
+            return Task.FromResult((without, withDagger, withSword));
+        });
+        Assert.Equal(result.without, result.withDagger); // a dagger gets nothing from Sword Mastery
+        Assert.Equal(result.without + 5, result.withSword); // level 5 row: PATK +5 with a sword
+    }
+
+    [ClientDataFact]
     public async Task EleventhCraftOfARecipeIsAtLeastOrangeAndTheCounterPersists()
     {
         // EquipCraftConfig 2001 (rank 2, subtype 1): rank-2 weights make quality 4 (2010240) certain, so only the

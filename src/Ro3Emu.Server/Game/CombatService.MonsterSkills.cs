@@ -22,7 +22,7 @@ public sealed partial class CombatService
         if (caster.Dead || caster.Hp <= 0) return 0;
         int skillId = (int)GameData.Int(row, "_iID");
         if (session <= 0) session = ++_sessionIds;
-        int show = HitEffect(GameData.Int(row, "_iScriptShow"));
+        int show = HitEffect(row);
         int element = (int)GameData.Int(row, "_iEleType") is var e and > 1 ? e : caster.Template.Element;
         var attacker = new Fighter(caster.Template.Atk, caster.Template.Matk, caster.Template.Hit, caster.Template.Cri,
             caster.Template.Level, caster.Template.Element);
@@ -36,11 +36,12 @@ public sealed partial class CombatService
             bool Current() => ReferenceEquals(p.Role, targetRole) && p.WorldScene == scene && p.SceneGeneration == generation
                 && ReferenceEquals(p.Attachment, lease) && lease?.Cancelled != true;
             var stats = character.Stats(p);
-            var defender = new Fighter(0, 0, 0, 0, p.Progress.Level, 1) { Def = stats[105], Mdef = stats[106], Flee = stats[110], ResCri = stats[112] };
+            var defender = new Fighter(0, 0, 0, 0, p.Progress.Level, ArmorElement(p)) { Def = stats[105], Mdef = stats[106], Flee = stats[110], ResCri = stats[112], CritReduce = stats[238] };
             var (damage, result) = Damage(attacker, defender, row);
             damage = ScaleMonsterDamage(damage, caster.DamageRatio);
             if (damagePercent != 100) damage = damagePercent <= 0 ? 0 : ScaleMonsterDamage(damage, damagePercent * 100);
             foreach (var adjust in MonsterDamageAdjusters) damage = adjust(caster, damage, true);
+            damage = ReduceIncomingDamage(p, damage, row, result, stats);
             if (damage > 0) foreach (var modifier in IncomingDamageAdjusters) damage = Math.Max(0, await modifier(caster, p, result, damage));
             var committed = await CommitPlayerDamageAsync(p, damage, row, Current, sourceElement: element);
             if (committed == null) continue;
@@ -61,6 +62,8 @@ public sealed partial class CombatService
                 await FightingAsync(p);
                 if (hp == 0)
                 {
+                    try { await monsters.OnKilledPlayerAsync(caster, p); }   // kill progression (MonsterAiSettings), before the death handlers
+                    catch (Exception growthError) { log.LogError(growthError, "Monster kill progression failed"); }
                     await PlayerDiesAsync(p);
                     continue;
                 }

@@ -398,17 +398,20 @@ public sealed partial class GuildService(GameData data, GuildStore store, RoleSt
         await s.SendGameAsync(Create, new GuildCreateResp { Result = code });
     }
 
-    private static GuildStore.Member NewMember(GameSession s, int official) => new()
+    /// <summary>The injected clock in ms: a member's EnterTime is compared with <see cref="WeekStart"/> (the same clock) when last week's dividend is checked.</summary>
+    private long ClockMs() => clock.GetUtcNow().ToUnixTimeMilliseconds();
+
+    private GuildStore.Member NewMember(GameSession s, int official) => new()
     {
         RoleId = s.Role!.Id, Name = s.Role.Name, Level = s.Progress!.Level,
-        Career = s.Progress.Career, EnterTime = NowMs(), OfflineTime = -1, Official = official,
+        Career = s.Progress.Career, EnterTime = ClockMs(), OfflineTime = -1, Official = official,
     };
 
     private GuildStore.Member NewMember(Role role, int official)
     {
         var progress = roles.LoadProgress(role.Id);
         return new GuildStore.Member { RoleId = role.Id, Name = role.Name, Level = progress.Level,
-            Career = progress.Career, EnterTime = NowMs(), OfflineTime = NowSec(), Official = official };
+            Career = progress.Career, EnterTime = ClockMs(), OfflineTime = NowSec(), Official = official };
     }
 
     private Task RecommendCoreAsync(GameSession s, GuildRecommendListReq req)

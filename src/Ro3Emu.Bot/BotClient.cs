@@ -296,6 +296,14 @@ public sealed class BotClient : IAsyncDisposable
         await pong.WaitAsync(Timeout, _cts.Token);
     }
 
+    /// <summary>A HEARTBEAT whose Ping carries <paramref name="tag"/> (the client times its ping by it); returns the Pong.</summary>
+    public async Task<Pong> HeartbeatAsync(string tag)
+    {
+        using var pong = _inbox.Expect(e => e.IsGame(MsgId.Heartbeat));
+        await SendGameBytesAsync(MsgId.Heartbeat, new Ping { StrDebugTag = tag }.ToByteArray());
+        return Pong.Parser.ParseFrom((await pong.WaitAsync(Timeout, _cts.Token)).Body);
+    }
+
     /// <summary>Micro PhonestGate.bind {Id, Auth, ClusterId} (GameClient.Bind); true when the gate accepted it.</summary>
     public async Task<bool> BindGateAsync(string callerId, byte[] auth, int clusterId = 1)
     {

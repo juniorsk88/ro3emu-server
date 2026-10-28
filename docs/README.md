@@ -6,13 +6,18 @@
 - [Open content](guide/open-content.md): every feature the client can show is playable (`Ro3Emu:OpenContent`)
 - [Bug reports](guide/feedback.md): the in-game Feedback button and `/bug`, and how to read the reports
 - [Launcher and patch repository](guide/launcher.md): hosting the client for your players
+- [Client release 140075: the signed-origins guard](guide/client-origin-guard.md): why the login did nothing and what the patch changes
+- [The HUD ping](guide/hud-ping.md): why the indicator showed 0 ms and the tag the `Pong` must echo
+- [Monster chase AI](guide/monster-ai.md): when monsters give up a chase and whether they return and heal (`monster-ai.json`, admin panel)
+- [Fixes and improvements log](guide/fixes-log.md): every sprite, NPC and bug fix, with cause and how it was done
+- [NPC services](guide/npc-services.md): the shop and refine options that merchant and smith NPCs get in their dialogue
 - [Tests](guide/testing.md): content tests on your exported data, rule tests on the invented fixture that CI runs
 
 ## Systems: how each part is implemented
 
 | Area | Notes |
 |---|---|
-| Combat and skills | [skill protocol](systems/skill-protocol.md) · [buffs and resources](systems/skill-buffs.md) · [skill growth](systems/skill-growth.md) · [remaining skill messages](systems/skills-rest.md) · [totem effects](systems/totem-effects.md) |
+| Combat and skills | [skill protocol](systems/skill-protocol.md) · [skill visuals](systems/skill-visuals.md) · [buffs and resources](systems/skill-buffs.md) · [skill growth](systems/skill-growth.md) · [remaining skill messages](systems/skills-rest.md) · [totem effects](systems/totem-effects.md) |
 | Character and items | [equipment affixes](systems/equipment-affixes.md) · [build presets](systems/genre.md) · [wardrobe](systems/wardrobe.md) · [mounts and totems](systems/mount-totem.md) |
 | Pets | [pets](systems/pet.md) · [pets in the world](systems/pet-world-follow.md) · [tower companions and Bonus Time](systems/tower-pets-afk.md) |
 | Life jobs | [life jobs and production](systems/lifejob.md) · [gathering](systems/gathering.md) |

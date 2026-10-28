@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using Google.Protobuf;
 using Romsg;
 using Ro3Emu.Server.Data;
@@ -108,34 +109,31 @@ public sealed partial class TaskService
             await TaskErrorAsync(session, TaskLuckyTurn, req.Type, ErrorCodes.Parameter);
             return;
         }
-        int ticket = data.Table("PublicParamConfig").TryGetValue("RunRingTaskTurntableItem", out var configuredTicket)
+        var param = data.Table("PublicParamConfig");
+        int ticket = param.TryGetValue("RunRingTaskTurntableItem", out var configuredTicket)
             && GameData.Number(configuredTicket) is { } ticketNumber and > 0 and <= int.MaxValue
             ? (int)ticketNumber : 0;
-        if (ticket <= 0)
+        long reward = param.TryGetValue("RunRingTaskTurnReward", out var configuredReward)
+            && GameData.Number(configuredReward) is { } rewardNumber and > 0 ? (long)rewardNumber : 0;
+        var slots = reward > 0 ? WheelSlots(reward) : [];
+        if (ticket <= 0 || slots.Count == 0)
         {
             await TaskErrorAsync(session, TaskLuckyTurn, req.Type, ErrorCodes.FeatureUnavailable);
             return;
         }
-        var rows = data.Table("LuckyTrunConfig").Values.OrderBy(r => GameData.Int(r, "_iID")).ToArray();
-        if (rows.Length != 8 || rows.Any(r => GameData.Int(r, "_iweight") <= 0 || GameData.Int(r, "_iAward") <= 0))
-        {
-            await TaskErrorAsync(session, TaskLuckyTurn, req.Type, ErrorCodes.FeatureUnavailable);
-            return;
-        }
-        long totalWeight = rows.Sum(r => GameData.Int(r, "_iweight"));
         var grants = new List<AwardGrant>();
+        var indexes = new List<int>();
         try
         {
             for (int draw = 0; draw < turns; draw++)
             {
-                long choice = Random.Shared.NextInt64(totalWeight);
-                foreach (var row in rows)
-                {
-                    choice -= GameData.Int(row, "_iweight");
-                    if (choice >= 0) continue;
-                    grants.AddRange(awards.Resolve(session, GameData.Int(row, "_iAward")).Grants);
-                    break;
-                }
+                var resolved = awards.Resolve(session, reward).Grants;
+                if (resolved.Count != 1) throw new AwardResolutionException("Wheel draw must name one displayed prize");
+                var grant = resolved[0];
+                int slot = slots.FindIndex(s => s.Entry == grant.Entry && s.Count == grant.Count);
+                if (slot < 0) throw new AwardResolutionException("Wheel prize is absent from its preview");
+                indexes.Add(slot);
+                grants.Add(grant);
             }
         }
         catch (AwardResolutionException)
@@ -143,12 +141,34 @@ public sealed partial class TaskService
             await TaskErrorAsync(session, TaskLuckyTurn, req.Type, ErrorCodes.FeatureUnavailable);
             return;
         }
-        if (!await character.ApplyAwardAsync(session, new AwardPlan(0, 0, grants), costs: [(ticket, turns)]))
+        if (!await character.ApplyAwardAsync(session, new AwardPlan(reward, 0, grants), costs: [(ticket, turns)],
+                manifestType: ManifestTypeRunRing, rewardIndexes: indexes))
         {
             await TaskErrorAsync(session, TaskLuckyTurn, req.Type, ErrorCodes.ItemsShort);
             return;
         }
         await session.SendGameAsync(TaskLuckyTurn, new LuckyTurnResp { Result = 0, Version = req.Version });
+    }
+
+    /// <summary>PBManifestType.ManifestTypeRunRing (MG_Common.proto), the rewardType LC_DAL_Reward routes to the wheel.</summary>
+    internal const int ManifestTypeRunRing = 18;
+
+    /// <summary>The wheel's slots in order: the award's AwardConfig _kPreview, as GetSeasonAwardPreview lists them (the
+    /// default value, the one <see cref="AwardService.Resolve"/> rolls here).</summary>
+    private List<(int Entry, int Count)> WheelSlots(long group)
+    {
+        if (data.Row("MultiverseGroupConfig", group) is not { } mv) return [];
+        if (data.Row("AwardConfig", GameData.Int(mv, "_iValue_default")) is not { ValueKind: JsonValueKind.Array } rows || rows.GetArrayLength() != 1) return [];
+        if (!rows[0].TryGetProperty("_kPreview", out var preview) || preview.ValueKind != JsonValueKind.Array || preview.GetArrayLength() != 8) return [];
+        var slots = new List<(int, int)>();
+        foreach (var tuple in preview.EnumerateArray())
+        {
+            if (tuple.ValueKind != JsonValueKind.Array || tuple.GetArrayLength() < 2) return [];
+            double entry = GameData.Number(tuple[0]) ?? 0, count = GameData.Number(tuple[1]) ?? 0;
+            if (entry is <= 0 or > int.MaxValue || count is <= 0 or > int.MaxValue) return [];
+            slots.Add(((int)entry, (int)count));
+        }
+        return slots;
     }
 
     /// <summary>30016 resolves the destination from a running quest's own 142/143 track action.</summary>

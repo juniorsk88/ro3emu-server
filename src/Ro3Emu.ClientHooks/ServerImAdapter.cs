@@ -152,6 +152,11 @@ namespace Ro3Emu.ClientHooks
                 VoiceClient.OnTicket(memory.ToArray());
                 return;
             }
+            if (msgId == TradeWindow.DownMsgId)
+            {
+                TradeWindow.OnDown(memory); // only queues the JSON; the window applies it on the main thread
+                return;
+            }
             if (msgId != DownMsgId || memory.Length < 8) return;
             var data = memory.ToArray();
             _inbound.Enqueue(new Frame

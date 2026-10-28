@@ -362,6 +362,33 @@ public sealed partial class CharacterService
         session.Items = session.Items.Select(i => replacements.GetValueOrDefault(i, i)).ToList();
     }
 
+    private int ExpectedPack(int entry) =>
+        TotemService.IsTotem(data, entry) ? 4 : EmblemService.IsEmblem(data, entry) ? 5 : ConfigPack(data.Row("ItemConfig", entry)!.Value);
+
+    /// <summary>
+    /// Moves items the admin panel once stored in the item tab (pack 1, whatever their type) to the tab the server would have
+    /// granted them in: gear to the equipment tab, totems, Soul Echoes. Only pack 1 is read: the cart (pack 100) keeps its items.
+    /// </summary>
+    private void MigrateMisfiledItems(GameSession session)
+    {
+        var moved = session.Items.Where(i => i.Pack == PackItem // worn gear (Grid > 0) counts too: only pack 2 is read as worn
+            && data.Row("ItemConfig", i.Entry) != null && ExpectedPack(i.Entry) != PackItem).ToList();
+        if (moved.Count == 0) return;
+        var sorts = session.Items.Where(i => i.Grid == 0).GroupBy(i => i.Pack).ToDictionary(g => g.Key, g => g.Max(i => i.Sort));
+        var replacements = new Dictionary<InvItem, InvItem>(ReferenceEqualityComparer.Instance);
+        var builder = roles.NewTransaction();
+        foreach (var old in moved.OrderBy(i => i.Sort).ThenBy(i => i.Guid))
+        {
+            var item = old.Clone();
+            item.Pack = ExpectedPack(item.Entry);
+            if (item.Grid == 0) item.Sort = sorts[item.Pack] = sorts.GetValueOrDefault(item.Pack) + 1;
+            builder.ItemUpdate(item);
+            replacements[old] = item;
+        }
+        roles.Commit(builder, "character/misfiled-pack-migration");
+        session.Items = session.Items.Select(i => replacements.GetValueOrDefault(i, i)).ToList();
+    }
+
     /// <summary>Mail-only preflight for combined plain, bound, exact-instance and long-currency grants under StateLock.</summary>
     internal int PlainGrantError(GameSession session, IReadOnlyList<(int Entry, int Count)> goods,
         IReadOnlyList<InvItem>? exactGoods = null, IReadOnlyDictionary<int, long>? currencyGoods = null,

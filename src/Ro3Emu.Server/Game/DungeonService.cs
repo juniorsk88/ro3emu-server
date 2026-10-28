@@ -16,6 +16,10 @@ namespace Ro3Emu.Server.Game;
 /// </summary>
 public sealed partial class DungeonService
 {
+    private const long EggThiefDungeon = 1021301;
+    private const int EggThiefWaveSpeedCm = 550;
+    private const float EggThiefWaveLeash = 100f;
+
     public const uint Sync = 5062, Enter = 30400, BaseInfo = 30401, Leave = 30402, Result = 30403, Event = 30404,
         Confirm = 30406, ClientEvent = 30106, CreateResult = 30107, EnterSceneResult = 30108,
         Reset = 30124, ReadyQueue = 42033, TeamInfo = 30441, ConfirmReminder = 42047, ConfirmReminderNotify = 42046,
@@ -62,6 +66,7 @@ public sealed partial class DungeonService
     private readonly AwardService awards;
     private readonly ServerOptions options;
     private readonly PraiseService praise;
+    private readonly DungeonSoloScale soloScale;
     private readonly Dictionary<GameSession, Preparation> pending = new();
 
     public DungeonService(GameData data, DungeonCatalog catalog, RoleStore roles, Ownership.OwnerRegistry owners,
@@ -70,9 +75,9 @@ public sealed partial class DungeonService
         SessionRegistry sessions, RewardService rewards, AuctionService auctions, GuildStore guilds, MonsterService monsters, CombatService combat,
         SceneService scene, BuffService buffs, GameLoop loop, TimeProvider clock, ILogger<DungeonService> log, World world,
         GmCommands gm, AccountStore accounts, AwardService awards, Microsoft.Extensions.Options.IOptions<ServerOptions> options,
-        PraiseService praise)
+        PraiseService praise, DungeonSoloScale soloScale)
     {
-        this.accounts = accounts; this.awards = awards; this.options = options.Value; this.praise = praise;
+        this.accounts = accounts; this.awards = awards; this.options = options.Value; this.praise = praise; this.soloScale = soloScale;
         gm.Register("firstclear", "<bossId> [daysAgo] | <bossId> clear (Realm of the Gods test aid: the server's first clear "
             + "of a boss, which unlocks its hall of fame entry and Sacred Blessing)", FirstClearGmAsync);
         this.data = data; this.catalog = catalog; this.roles = roles; this.owners = owners;
@@ -143,6 +148,8 @@ public sealed partial class DungeonService
         public bool Spawning { get; set; }
         /// <summary>The current scripted step got one of its completing client events (DungeonService.Scripted).</summary>
         public bool StepDone { get; set; }
+        /// <summary>The floor guide line (PGuideWayList) is lit for the current scripted step.</summary>
+        public bool GuideShown { get; set; }
         /// <summary>A Realm of the Gods raid waits in its preparation phase (DungeonService.RealmOfGods).</summary>
         public bool Preparing { get; set; }
         /// <summary>The boss's Sacred Blessing level (TenGameplayBuffConfig row) active for this run, fixed at its start.</summary>
@@ -208,9 +215,9 @@ public sealed partial class DungeonService
         long[] ids = s.Role == null ? [] : plan?.MaxPlayers == 1 ? [s.Role.Id] : teams.MembersOf(s.Role.Id).ToArray();
         var online = sessions.All().Where(p => p.Role != null).ToDictionary(p => p.Role!.Id);
         var members = ids.Where(online.ContainsKey).Select(id => online[id]).ToArray();
-        if (error == 0 && ids.Length > 1 && membership.Leader != s.Role!.Id) error = ErrorCodes.NoPermission;
-        // GM "!dungeonsolo on" (test aid, not original behaviour): a lone role may also enter a team boss with 30400.
-        if (error == 0 && ids.Length < plan!.MinPlayers && !(ids.Length == 1 && s.DungeonSoloMatch && plan.Multi != null))
+        if (error == 0 && ids.Length > 1 && membership.Leader != s.Role!.Id && !options.DungeonAnyMemberEnter) error = ErrorCodes.NoPermission;
+        // GM "!dungeonsolo on" or Ro3Emu:DungeonSolo (not original behaviour): a lone role may also enter a team boss with 30400.
+        if (error == 0 && ids.Length < plan!.MinPlayers && !(ids.Length == 1 && SoloAllowed(s) && plan.Multi != null))
             error = ErrorCodes.DungeonTeamSize;
         if (error == 0 && ids.Length > plan!.MaxPlayers) error = ErrorCodes.PartyFull;
         if (error == 0 && members.Length != ids.Length) error = ErrorCodes.PlayerOffline;
@@ -229,7 +236,9 @@ public sealed partial class DungeonService
         await s.SendGameAsync(Enter, new EnterDungeonRsp { Result = error });
         if (error != 0) return;
         if (members.Length == 1) { await BeginAsync(plan!, members, s.Role!.Id, membership.TeamId); return; }
-        var p = new Preparation { Plan = plan!, Members = members, Leader = s, TeamId = membership.TeamId };
+        // A member who is not the party leader may start it (Ro3Emu:DungeonAnyMemberEnter): the leader still owns the room.
+        var owner = members.FirstOrDefault(m => m.Role!.Id == membership.Leader) ?? s;
+        var p = new Preparation { Plan = plan!, Members = members, Leader = owner, TeamId = membership.TeamId };
         p.Ready.Add(s); // Initiating the request is the leader's affirmative answer (inferred).
         foreach (var member in members) pending[member] = p;
         await BroadcastReadyAsync(p);
@@ -551,7 +560,27 @@ public sealed partial class DungeonService
         foreach (var spawn in a.Plan.Waves[a.Wave].Spawns)
         {
             if (a.Settled || a.Room.Closed) { a.Spawning = false; return; }
-            var monster = await instances.SpawnAsync(a.Room, spawn.NpcId, spawn.Point);
+            MonsterTemplate? waveTemplate = null;
+            if (a.Plan.SceneEntry == EggThiefDungeon && monsters.Template(spawn.NpcId) is { } template)
+            {
+                // (inferred) The missing original encounter script sent these three portal waves toward the player. The
+                // reconstructed first-wave Pupa is immobile and all three authored portals lie outside its normal
+                // 20 m home leash, so ordinary field AI leaves two actors off-camera forever. Use the 550 cm/s pace
+                // already carried by this encounter's Boa/Willow waves and a room-sized leash for this scene only.
+                // Ported from upstream #89.
+                waveTemplate = template with
+                {
+                    SpeedCm = Math.Max(template.SpeedCm, EggThiefWaveSpeedCm),
+                    LeashDistance = Math.Max(template.LeashDistance, EggThiefWaveLeash),
+                };
+            }
+            // A team boss met by fewer players than its minimum, or than its maximum, is weaker (dungeon-solo.json,
+            // Ro3Emu:DungeonMissingMemberPercent; not original behaviour).
+            if (a.Plan.Multi != null && soloScale.For(a.Room.ActiveMembers.Count(), a.Plan.MinPlayers, a.Plan.MaxPlayers) is { } scale
+                && (waveTemplate ?? monsters.Template(spawn.NpcId)) is { } scaled)
+                waveTemplate = scaled with { MaxHp = Math.Max(1, scaled.MaxHp * scale.Hp / 100),
+                    Atk = scaled.Atk * scale.Attack / 100, Matk = scaled.Matk * scale.Attack / 100 };
+            var monster = await instances.SpawnAsync(a.Room, spawn.NpcId, spawn.Point, customTemplate: waveTemplate);
             if (a.Settled || a.Room.Closed)
             {
                 a.Spawning = false;
@@ -660,7 +689,7 @@ public sealed partial class DungeonService
         a.RevivesUsed[s.Role.Id] = a.RevivesUsed.GetValueOrDefault(s.Role.Id) + 1;
     }
 
-    public Task PublishExternalReviveAsync(GameSession s) => Active(s) is { } a
+    public Task PublishExternalReviveAsync(GameSession s) => s.Role != null && Active(s) is { } a
         ? SendReviveInfoAsync(s, a) : Task.CompletedTask;
 
     private async Task PlayerDiedAsync(GameSession s)
@@ -918,5 +947,31 @@ public sealed partial class DungeonService
         }
         // A disconnected member's channel must never prevent another participant's committed award.
         foreach (var notify in notifications) await notify();
+        if (won && a.Plan.Multi == null && options.StoryDungeonExitSeconds > 0
+            && a.Plan.Waves.Any(w => w.Quest != 0 || w.Step != null))
+            await ReturnToFieldAsync(a, participants.Select(p => p.Session).ToArray());
+    }
+
+    /// <summary>
+    /// A cleared story dungeon shows no result window and its quest keeps the tracker text, so the players are told the quest is
+    /// done and, after StoryDungeonExitSeconds, taken out as the exit button would (not original behaviour).
+    /// </summary>
+    private async Task ReturnToFieldAsync(Attempt a, GameSession[] members)
+    {
+        int seconds = options.StoryDungeonExitSeconds;
+        foreach (var s in members)
+            try
+            {
+                await s.SendGameAsync(GmCommands.BroadcastNotify, new BroadCastNotify
+                { Content = $"Missão da área concluída! Você volta ao campo em {seconds} segundos (ou use o botão de sair, ao lado do minimapa). A próxima parte da missão continua fora daqui." });
+            }
+            catch (Exception e) when (e is not OperationCanceledException) { log.LogDebug(e, "Exit notice not delivered to {Role}", s.Role?.Name); }
+        loop.ScheduleLegacy(TimeSpan.FromSeconds(seconds), async () =>
+        {
+            foreach (var s in members)
+                if (s.Role != null && ReferenceEquals(s.DungeonAttempt, a) && s.InstanceId == a.Room.Id && !a.Room.Closed)
+                    try { await LeaveAsync(s); }
+                    catch (Exception e) when (e is not OperationCanceledException) { log.LogWarning(e, "Automatic exit failed for {Role}", s.Role?.Name); }
+        });
     }
 }

@@ -27,6 +27,7 @@ public sealed class SkillGrowthTests : IAsyncLifetime
             o.HttpPort = httpPort;
             o.MicroGatePort = microPort;
             o.GameGatePort = gamePort;
+            o.PresetSwitchCooldown = 3; // the original wait, so the refusal inside it stays covered
         });
         await app.StartAsync();
         http = $"http://127.0.0.1:{httpPort}";
@@ -175,6 +176,62 @@ public sealed class SkillGrowthTests : IAsyncLifetime
         Assert.Equal(0, refunded.SkillAssignPlans.Inc.Value[0].SkillAssigns[11001].Inc.SkillLevel);
         Assert.Equal(15, refunded.SkillAssignPlans.Inc.Value[0].SkillPoints[2].All);
         Assert.Equal(0, (await Next(alice, SkillService.PlanUpdate, SkillGrowthSkillPlanUpdateResp.Parser)).Result);
+    }
+
+    [ClientDataFact]
+    public async Task PointsLeftInAnEarlierRankPayForALaterRankSkill()
+    {
+        await using var alice = await InWorld("Alice");
+        await Next(alice, SkillService.SkillDataSync, DBSkillDataIncrement.Parser);
+        await Gm("alice", "!job 1200"); // rank 3 at job level 1: ~1 rank-3 point of its own, the whole rank-2 pool (40) untouched
+        await Next(alice, SkillService.SkillDataSync, DBSkillDataIncrement.Parser,
+            m => !m.SyncAllMark && m.SkillAssignPlans?.Inc?.Value[0].SkillPoints.Count > 0);
+
+        var learn = new SkillGrowthSkillPlanUpdateReq { Plan = 0 };
+        learn.LevelUpList[11101] = new SkillData { SkillId = 11101, SkillLevel = 10 }; // rank-3 skill, 10 points
+        await alice.SendGameAsync(SkillService.PlanUpdate, learn);
+        Assert.Equal(0, (await Next(alice, SkillService.PlanUpdate, SkillGrowthSkillPlanUpdateResp.Parser)).Result);
+        var allocated = await Next(alice, SkillService.SkillDataSync, DBSkillDataIncrement.Parser,
+            m => !m.SyncAllMark && m.SkillAssignPlans?.Inc?.Value[0].SkillAssigns.ContainsKey(11101) == true);
+        // Every rank tab reports the same remaining pool.
+        var points = allocated.SkillAssignPlans.Inc.Value[0].SkillPoints;
+        Assert.True(points[2].All > 0);
+        Assert.Equal(points[2].All, points[3].All);
+    }
+
+    [ClientDataFact]
+    public async Task ANormalAttackRowMissingFromTheDataStillListsItsGroupAtLevelOne()
+    {
+        // Job 2300 names normal attack 1200001, which SkillConfig lacks; the client derives group 12000 from the id and shows it as a
+        // pending "+1" (with no way to confirm) unless the plan lists it at level 1.
+        await using (var alice = await InWorld("Alice"))
+        {
+            await Next(alice, SkillService.SkillDataSync, DBSkillDataIncrement.Parser);
+            await Gm("alice", "!job 2300");
+            var changed = await Next(alice, SkillService.SkillDataSync, DBSkillDataIncrement.Parser,
+                m => !m.SyncAllMark && m.CurrentAtkSkillId == 1200001);
+            Assert.Equal(1, changed.SkillAssignPlans.Inc.Value[0].SkillAssigns[12000].All.SkillLevel);
+            Assert.Equal(1, changed.SkillAssignPlans.Inc.Value[0].SkillAssigns[12999].All.SkillLevel); // the mace swing (JobAttackConfig)
+        }
+        await using var again = await InWorld("Alice", create: false);
+        var full = await Next(again, SkillService.SkillDataSync, DBSkillDataIncrement.Parser);
+        Assert.Equal(1, full.SkillAssignPlans.All.Value[0].SkillAssigns[12000].SkillLevel);
+        Assert.Equal(1, full.SkillAssignPlans.All.Value[0].SkillAssigns[12999].SkillLevel);
+    }
+
+    [ClientDataFact]
+    public async Task ANormalAttackCanBePlacedOnTheBar()
+    {
+        await using var alice = await InWorld("Alice");
+        await Next(alice, SkillService.SkillDataSync, DBSkillDataIncrement.Parser);
+        await Gm("alice", "!job 1100");
+        await Next(alice, SkillService.SkillDataSync, DBSkillDataIncrement.Parser, m => !m.SyncAllMark && m.CurrentAtkSkillId == 1100001);
+        foreach (var (group, slot) in new[] { (11000, 4), (10000, 5) })
+        {
+            await alice.SendGameAsync(SkillService.SkillLoad, new SkillLoadReq
+                { OpType = SkillLoadOperation.SkillLoadOpLoad, IsManual = true, SocketNum = slot, Info = new SkillData { SkillId = group, SkillLevel = 1 } });
+            Assert.Equal(0, (await Next(alice, SkillService.SkillLoad, SkillLoadResp.Parser)).Result);
+        }
     }
 
     [ClientDataFact]

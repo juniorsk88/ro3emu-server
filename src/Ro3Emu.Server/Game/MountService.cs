@@ -226,6 +226,24 @@ public sealed class MountService : IGameTicker
         await s.SendGameAsync(Ride, new PlayerRiderMountResp { Result = error, Tp = tp });
     }
 
+    /// <summary>SkillConfig._kSkilltag of a flying-mount skill (enum_BattleSkillTag.MountFlySkill); it is cast from the mount.</summary>
+    private const long MountFlySkillTag = 9005401;
+
+    /// <summary>
+    /// CombatService.BeforeCast (the role's state lock is held): a cast gets the role off its mount, as hitting or being hit
+    /// does, so the client plays the dismount and then the cast (a cast played on a mount showed a delay). A quest's
+    /// temporary ride and the flying-mount skills are left alone.
+    /// </summary>
+    public async Task DismountForCastAsync(GameSession s, JsonElement row)
+    {
+        if (s.Mounts == null || s.MountState.QuestMount != 0 || !s.Mounts.MountIds.Values.Any(m => m.IsRiding)) return;
+        if (row.TryGetProperty("_kSkilltag", out var tags) && tags.ValueKind == JsonValueKind.Array
+            && tags.EnumerateArray().Any(t => GameData.Number(t) == MountFlySkillTag)) return;
+        var next = s.Mounts.Clone();
+        foreach (var value in next.MountIds.Values) value.IsRiding = false;
+        await CommitAsync(s, next, CopyState(s));
+    }
+
     private SavedState CopyState(GameSession s) => JsonSerializer.Deserialize<SavedState>(Encode(s))!;
 
     /// <param name="look">The linked wardrobe change (WardrobeService.Mounts.cs) committed in the same transaction.</param>

@@ -31,10 +31,15 @@ public static class ServerHost
         builder.Services.AddSingleton(Options.Create(options));
         builder.Services.AddSingleton(clock ?? TimeProvider.System);
         builder.WebHost.UseUrls($"http://{options.ListenAddress()}:{options.HttpPort}"); // loopback for local play and tests
+        // Kestrel stops first and waits for every HTTP connection (a half-sent request holds it for the 30 s header timeout),
+        // and the gates, loop and database stop only after it. The reaper aborts what is left a moment after stop begins.
+        var httpConnections = new HttpConnectionReaper();
+        builder.WebHost.ConfigureKestrel(k => k.ConfigureEndpointDefaults(l => Microsoft.AspNetCore.Connections.ConnectionBuilderExtensions.Use(l, httpConnections.Track)));
 
         // First hosted service: everything after it (loop, gates, HTTP) starts with the game data already parsed.
         if (options.PreloadGameData) builder.Services.AddHostedService<Ro3Emu.Server.Data.GameDataPreload>();
         builder.Services.AddSingleton<Diagnostics.ServerMetrics>();
+        builder.Services.AddSingleton<Diagnostics.SessionCensus>();
         builder.Services.AddSingleton<ILoggerProvider, Diagnostics.MetricsLoggerProvider>();
         // Recent log lines for bug reports (FeedbackService); kept out of the pipeline when reports keep no context.
         builder.Services.AddSingleton<Diagnostics.RecentLogBuffer>();
@@ -151,6 +156,10 @@ public static class ServerHost
         builder.Services.AddSingleton<ChatService>();
         builder.Services.AddSingleton<FeedbackService>();
         builder.Services.AddSingleton<GmCommands>();
+        builder.Services.AddSingleton<CreditShop>();
+        builder.Services.AddSingleton<CurrencyExchange>();
+        builder.Services.AddSingleton<DungeonSoloScale>();
+        builder.Services.AddHostedService<CreditShopDelivery>();
         builder.Services.AddSingleton<Ro3Emu.Server.Data.GameData>();
         builder.Services.AddSingleton<SessionRegistry>();
         builder.Services.AddSingleton<GateAuthRegistry>();
@@ -173,6 +182,8 @@ public static class ServerHost
         builder.Services.AddSingleton<Game.Messaging.IMessageModule, ActivitiesMessages>();
         builder.Services.AddSingleton<Game.Messaging.IMessageModule, AdventureGroupMessages>();
         builder.Services.AddSingleton<Game.Messaging.IMessageModule, Voice.VoiceTicketService>();
+        builder.Services.AddSingleton<PlayerTradeService>();
+        builder.Services.AddSingleton<Game.Messaging.IMessageModule>(sp => sp.GetRequiredService<PlayerTradeService>());
         builder.Services.AddSingleton<GameMessageHandler>();
         builder.Services.AddSingleton(sp => GateCrypto.LoadOrCreate(options.DataDir, sp.GetRequiredService<ILogger<GateCrypto>>()));
         builder.Services.AddSingleton<IMicroService, LoginService>();
@@ -201,6 +212,7 @@ public static class ServerHost
         builder.Services.AddSingleton<CredentialLimiter>();
 
         var app = builder.Build();
+        app.Lifetime.ApplicationStopping.Register(() => httpConnections.AbortAfter(HttpConnectionReaper.Grace));
         app.Services.GetRequiredService<RealmLock>();
         app.Services.GetRequiredService<Game.Ownership.RoleHandover>()
             .Configure(session => app.Services.GetRequiredService<RoleSessionService>().CleanupRoleAsync(session),
@@ -208,6 +220,9 @@ public static class ServerHost
         app.Services.GetRequiredService<Diagnostics.ServerMetrics>().Owners = app.Services.GetRequiredService<Game.Ownership.OwnerRegistry>();
         // Mount energy meters (EnergyConfig._iBelongMount): BuffService cannot take MountService (MountService -> SceneService -> BuffService).
         app.Services.GetRequiredService<MountService>().Changed.Add(app.Services.GetRequiredService<BuffService>().MountsChangedAsync);
+        // A cast gets the role off its mount first (CombatService does not know MountService: MountService -> SceneService -> BuffService -> CombatService).
+        app.Services.GetRequiredService<CombatService>().SkillNoCancel = app.Services.GetRequiredService<IOptions<ServerOptions>>().Value.SkillNoCancel;
+        app.Services.GetRequiredService<CombatService>().BeforeCast.Add(app.Services.GetRequiredService<MountService>().DismountForCastAsync);
         app.Use(async (context, next) =>
         {
             if (HttpMethods.IsPost(context.Request.Method) && app.Services.GetRequiredService<GameLoop>().Phase != GameLoopPhase.Accepting)
@@ -287,9 +302,10 @@ public static class ServerHost
                 return Results.Json(new { code = ok ? 0 : 500, message = ok ? $"{current.Name} deleted" : "not deleted" });
             });
         });
-        // Public status for the launcher's online pill: only a count, never account or character names.
-        app.MapGet("/ro3emu/status", (SessionRegistry sessions) =>
-            Results.Json(new { online = true, players = sessions.All().Count(s => s.Role != null) }));
+        // Public status for the launcher's online pill: only a count, never account or character names. Read from the
+        // loop's census, so anyone polling it adds no work to the loop.
+        app.MapGet("/ro3emu/status", (Diagnostics.SessionCensus census) =>
+            Results.Json(new { online = true, players = census.Current.Roles.Count }));
         // A clean stop for RO3Emu.exe (loopback only): the same shutdown as Ctrl+C, the loop drains and the database closes.
         app.MapPost("/ro3emu/shutdown", (HttpContext context, IHostApplicationLifetime lifetime) =>
         {
@@ -297,11 +313,11 @@ public static class ServerHost
             lifetime.StopApplication();
             return Results.Ok("stopping");
         });
-        // Who is online, for the admin (loopback only).
-        app.MapGet("/ro3emu/online", (HttpContext context, SessionRegistry sessions) =>
+        // Who is online, for the admin (loopback only): read on the loop, where the sessions change.
+        app.MapGet("/ro3emu/online", async (HttpContext context, SessionRegistry sessions, GameLoop loop) =>
         {
             if (context.Connection.RemoteIpAddress is not { } ip || !System.Net.IPAddress.IsLoopback(ip)) return Results.NotFound();
-            return Results.Json(sessions.All().Select(s => new
+            var online = await loop.InvokeAsync(() => Task.FromResult(sessions.All().Select(s => new
             {
                 account = s.Account,
                 role = s.Role?.Name,
@@ -309,7 +325,8 @@ public static class ServerHost
                 x = s.Position.X,
                 z = s.Position.Z,
                 remote = s.Channel.Remote,
-            }));
+            }).ToArray()));
+            return Results.Json(online);
         });
         app.MapFallback((HttpContext context) =>
         {
@@ -482,6 +499,7 @@ internal sealed class GameLoopTickers(IServiceProvider services) : IHostedServic
         Add<DungeonMatchService>();
         Add<GatheringService>();
         Add<TotemEffects>();
+        Add<Diagnostics.SessionCensus>();
         Add<Game.Persistence.PositionPersistence>();
         Add<Game.Persistence.SettingsPersistence>();
         Add<ShopService>(); // 05:00 purchase-limit rollover
@@ -498,4 +516,23 @@ internal sealed class GameLoopQuiesceService(GameLoop loop) : IHostedService
 {
     public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     public Task StopAsync(CancellationToken cancellationToken) { loop.Quiesce(); return Task.CompletedTask; }
+}
+
+/// <summary>Tracks the open HTTP connections so a stop that Kestrel is still draining can abort them after a short grace.</summary>
+internal sealed class HttpConnectionReaper
+{
+    public static readonly TimeSpan Grace = TimeSpan.FromSeconds(2);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Microsoft.AspNetCore.Connections.ConnectionContext, byte> open = new();
+
+    public async Task Track(Microsoft.AspNetCore.Connections.ConnectionContext connection, Func<Task> next)
+    {
+        open[connection] = 0;
+        try { await next(); }
+        finally { open.TryRemove(connection, out _); }
+    }
+
+    public void AbortAfter(TimeSpan grace) => _ = Task.Delay(grace).ContinueWith(_ =>
+    {
+        foreach (var connection in open.Keys) connection.Abort();
+    }, TaskScheduler.Default);
 }

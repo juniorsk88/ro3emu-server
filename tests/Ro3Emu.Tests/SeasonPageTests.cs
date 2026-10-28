@@ -42,6 +42,11 @@ public sealed class SeasonPageTests : IAsyncLifetime
             o.PlayBook = 101; o.SeasonStart = "2026-10-05";
         }, clock);
         await app.StartAsync();
+        // The exported client opens function 69 (the season page) only at base level 9999; these tests are about the page, so
+        // its condition (2000062) is read as base level 50, the gate they were written for.
+        var functions = Service<FunctionService>();
+        var chained = functions.ConditionOverride;
+        functions.ConditionOverride = (session, id) => id == 2000062 ? session.Progress!.Level >= 50 : chained?.Invoke(session, id);
         http = $"http://127.0.0.1:{port}";
     }
 
@@ -347,10 +352,12 @@ public sealed class SeasonPageTests : IAsyncLifetime
     {
         await using var bot = new BotClient(http, File.ReadAllText(Path.Combine(dataDir, "gate_rsa_public.pem")));
         await bot.LoginAsync("alice", "pw"); await bot.EnterGateAsync();
-        Assert.Equal(ErrorCodes.FeatureUnavailable, (await Page(bot)).Result);
-        Assert.Equal(ErrorCodes.FeatureUnavailable, (await Claim(bot, (2, 17))).Result);
-        await bot.SendGameAsync(SeasonPageService.PutOnHonorBadge, new SeasonPagePutOnHonorBadgeReq { Id = 1300046, IsPutOn = true });
-        Assert.Equal(ErrorCodes.FeatureUnavailable, (await Next(bot, SeasonPageService.PutOnHonorBadge, SeasonPagePutOnHonorBadgeResp.Parser)).Result);
+        // No role yet: the stage gate drops the three requests unanswered.
+        await StageGate.Unanswered(bot, SeasonPageService.GetData, new SeasonPageGetDataReq());
+        var claim = new SeasonPageReceiveRankRewardReq();
+        claim.RankReward[2] = 17;
+        await StageGate.Unanswered(bot, SeasonPageService.ReceiveRankReward, claim);
+        await StageGate.Unanswered(bot, SeasonPageService.PutOnHonorBadge, new SeasonPagePutOnHonorBadgeReq { Id = 1300046, IsPutOn = true });
     }
 
     [ClientDataFact]

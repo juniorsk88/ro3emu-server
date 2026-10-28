@@ -84,6 +84,31 @@ public sealed partial class CombatService
             if (level <= 0 || data.Row("SkillConfig", skills.RealId(group, level)) is not { } row
                 || GameData.Int(row, "_iBasicType") != 0) continue;
             foreach (var pair in GameData.Pairs(row, "_kAttri")) yield return pair;
+            foreach (var pair in WeaponPassiveAttributes(session, row)) yield return pair;
+        }
+    }
+
+    /// <summary>
+    /// Weapon masteries (Sword/Spear/Mace/Axe Mastery, Double Attack, Dual-Wield Mastery, Sword Quicken...): the passive's _iSpecialEffect rows hold
+    /// ops [16, weapon subtype, attribute, value] ("with that weapon equipped, attribute + value"; the learned level's row carries its own value).
+    /// The weapon is the item in the main or off hand (equipment grids 1 and 2) whose ItemConfig._iSubType matches. (Riding's op 17 and the
+    /// skill-modifier ops 21/22 are not applied here.)
+    /// </summary>
+    private IEnumerable<(long Id, double Value)> WeaponPassiveAttributes(GameSession session, JsonElement row)
+    {
+        var effects = Numbers(row, "_iSpecialEffect");
+        if (effects.Length == 0) yield break;
+        HashSet<long>? held = null;
+        foreach (long id in effects)
+        {
+            if (data.Row("SpecialEffectConfig", id) is not { } effect) continue;
+            foreach (var op in EquipmentAffixes.Rows(effect, "_kSpecialEffect"))
+            {
+                if (op.Length < 4 || op[0] != 16) continue;
+                held ??= session.Items.Where(i => i.Grid is 1 or 2).Select(i => data.Row("ItemConfig", i.Entry))
+                    .Where(r => r is { } item && GameData.Int(item, "_iType") == 5).Select(r => GameData.Int(r!.Value, "_iSubType")).ToHashSet();
+                if (held.Contains(op[1])) yield return (op[2], op[3]);
+            }
         }
     }
 
@@ -195,9 +220,11 @@ public sealed partial class CombatService
             && data.Row("SkillConfig", effect.SkillId) != null
             ? ToPlayerAndViewersAsync(source, highLevel ? SkillEffectHigh : SkillEffect, effect) : Task.CompletedTask;
 
-    /// <summary>Server-timed bullet only when a skill script owns projectile travel.</summary>
+    /// <summary>Server-timed bullet only when a skill script owns projectile travel. SourceId 0 (start at SourcePosition,
+    /// e.g. the dropped Sag track) is allowed when the caster is the master.</summary>
     public Task SendSkillBulletAsync(GameSession source, SkillFixTimeBulletNotify bullet, bool highLevel = false) =>
-        source.Role != null && bullet.SourceId == source.Role.Id && bullet.EffectId > 0 && bullet.FixedTime > 0
+        source.Role != null && (bullet.SourceId == source.Role.Id || bullet.SourceId == 0 && bullet.MasterId == source.Role.Id)
+            && bullet.EffectId > 0 && bullet.FixedTime > 0
             && data.Row("SkillConfig", bullet.SkillConfigId) != null
             ? ToPlayerAndViewersAsync(source, highLevel ? SkillBulletHigh : SkillBullet, bullet) : Task.CompletedTask;
 

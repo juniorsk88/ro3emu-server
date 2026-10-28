@@ -457,6 +457,30 @@ public sealed class AppraiseEnchantTests : IAsyncLifetime
     }
 
     [ClientDataFact]
+    public async Task GearStoredInTheItemTabMovesToTheEquipmentTabAtLogin()
+    {
+        long guid;
+        await using (var alice = await InWorld("Alice"))
+        {
+            var gear = await Give(Orange);
+            guid = gear.Guid;
+            Assert.Equal(2, gear.Pack);
+            await Service<GameLoop>().InvokeAsync(async () =>
+            {
+                using var held = await CharacterService.Lock(Session());
+                var current = Live(guid);
+                current.Pack = 1; // what the admin panel stored before it knew the equipment tab
+                current.Grid = 1; // and worn, as the client then showed it
+                Service<ItemStore>().Update(current);
+            });
+        }
+        await using var again = await InWorld("Alice", create: false);
+        Assert.Equal(2, Session().Items.Single(i => i.Guid == guid).Pack);
+        var stored = Service<ItemStore>().Load((long)again.Self!.Uuid).Single(i => i.Guid == guid);
+        Assert.Equal((2, 1), (stored.Pack, stored.Grid));
+    }
+
+    [ClientDataFact]
     public async Task LegacyWornStackSplitsIntoIndependentlyEnchantableInstances()
     {
         const int LegacyGear = 2030550;
