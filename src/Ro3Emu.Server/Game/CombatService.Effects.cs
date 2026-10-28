@@ -476,7 +476,7 @@ public sealed partial class CombatService
 
     /// <summary>Who a displacement moves: the caster, a target away from / toward the caster, or a target away from /
     /// toward the centre of the skill's area (its target point, or a field's position).</summary>
-    internal enum DisplaceKind { CasterForward, CasterBack, TargetPush, TargetPull, CenterPush, CenterPull }
+    internal enum DisplaceKind { CasterForward, CasterBack, CasterToPoint, TargetPush, TargetPull, CenterPush, CenterPull }
 
     /// <summary>
     /// Skills whose description says they move the caster or knock back / pull what they hit. The distance is the
@@ -497,6 +497,9 @@ public sealed partial class CombatService
             ["WolvesDash"] = (DisplaceKind.CasterForward, 0, 0),
             ["HighspeedSlide"] = (DisplaceKind.CasterForward, 0, 0),
             ["HighspeedSlideMecha"] = (DisplaceKind.CasterForward, 0, 0),
+            ["DarkIllusion"] = (DisplaceKind.CasterForward, 1, 0),        // Shadow Step: "quickly dash ${2} meters toward the target" (show 15304, effect 1530402)
+            ["yingliu"] = (DisplaceKind.CasterForward, 0, 0),             // Flowing Shadow: "dash ${1} meters as a phantom" (show 15421, effect 1542101)
+            ["HesperusLit"] = (DisplaceKind.CasterToPoint, 1, 0),         // Twilight: "Leap to a selected area within ${2} meters" (show 11607, effect 1160707)
             ["PinpointAttack"] = (DisplaceKind.CasterForward, 3, 0),
             ["ArrowRepel"] = (DisplaceKind.TargetPush, 3, 0),
             ["PileBunker"] = (DisplaceKind.TargetPush, 5, 0),
@@ -603,10 +606,18 @@ public sealed partial class CombatService
 
     private async Task MoveCasterAsync(GameSession s, ActiveSkillCast action)
     {
-        if (Displacement(action.Row) is not { Kind: DisplaceKind.CasterForward or DisplaceKind.CasterBack } move) return;
+        if (Displacement(action.Row) is not { Kind: DisplaceKind.CasterForward or DisplaceKind.CasterBack or DisplaceKind.CasterToPoint } move) return;
         float face = action.Request.Face + (move.Kind == DisplaceKind.CasterBack ? 180 : 0);
         double angle = face * Math.PI / 180;
-        var end = WalkableEnd(s.SceneEntry, s.Position, (float)Math.Sin(angle) * move.Distance, (float)Math.Cos(angle) * move.Distance);
+        float dx = (float)Math.Sin(angle) * move.Distance, dz = (float)Math.Cos(angle) * move.Distance;
+        if (move.Kind == DisplaceKind.CasterToPoint && action.Request.TargetPos is { } point)
+        {
+            // A leap lands on the chosen point, no further than the skill's reach.
+            dx = point.X - s.Position.X; dz = point.Z - s.Position.Z;
+            float reach = MathF.Sqrt(dx * dx + dz * dz);
+            if (reach > move.Distance) { dx *= move.Distance / reach; dz *= move.Distance / reach; }
+        }
+        var end = WalkableEnd(s.SceneEntry, s.Position, dx, dz);
         var start = s.Position.Clone();
         await ToPlayerAndViewersAsync(s, SkillMove, new SkillStartMoveNotify
         {

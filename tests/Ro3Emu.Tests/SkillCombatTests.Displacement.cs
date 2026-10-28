@@ -27,6 +27,9 @@ public sealed partial class SkillCombatTests
         Assert.Equal((11308105, 250), Combat.MovementEffect(113081));  // PhantomThrust pull (8-digit show)
         Assert.Equal((1542903, 180), Combat.MovementEffect(15429));    // RetreatingShadows
         Assert.Equal((0, 0), Combat.MovementEffect(15112));            // Disguise: _bMovement 1, no displacement
+        Assert.Equal((1160707, 460), Combat.MovementEffect(11607));    // Twilight: the caster's leap (its 1160710 is the targets' knock-up)
+        Assert.Equal((1530402, 150), Combat.MovementEffect(15304));    // Shadow Step
+        Assert.Equal((1542101, 150), Combat.MovementEffect(15421));    // Flowing Shadow
         var data = _app.Services.GetRequiredService<GameData>();
         var skills = data.Table("SkillConfig").Values.ToList();
         Assert.Equal((1210210, 70), Combat.MovementEffect(12102));     // Jupitel Thunder knockback
