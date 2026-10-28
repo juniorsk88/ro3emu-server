@@ -177,13 +177,13 @@ public sealed partial class CombatService
             }
         }
         var stats = _character.Stats(s);
-        var attacker = new Fighter(stats[103], stats[104], stats[109], stats[111], s.Progress!.Level, 1) { CritBonus = stats[200] + stats[237], EleIgnore = stats[235], PenDef = stats[217], PenDefPct = stats[218], PenMdef = stats[219], PenMdefPct = stats[220] };
+        var attacker = new Fighter(stats[103], stats[104], stats[109], stats[111], s.Progress!.Level, AttackElement(s, row)) { CritBonus = stats[200] + stats[237], EleIgnore = stats[235], PenDef = stats[217], PenDefPct = stats[218], PenMdef = stats[219], PenMdefPct = stats[220] };
         var hit = new SkillHitInfo
         {
             SrcID = field?.Uid ?? action.SourceId, SkillId = action.Request.SkillId, SessionId = action.Id,
             RootCtxGuid = action.Id, ComboIndex = action.Request.ComboIndex, ShowPoint = VisualOf(row).HitEffect,
             Split = HitSplit(row),
-            SrcElement = (int)Math.Max(1, GameData.Int(row, "_iEleType")),
+            SrcElement = HitElement(s, row),
         };
         var killed = new List<MonsterUnit>();
         var processed = new List<MonsterUnit>();

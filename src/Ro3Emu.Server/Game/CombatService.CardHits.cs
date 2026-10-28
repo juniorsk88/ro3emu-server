@@ -125,9 +125,9 @@ public sealed partial class CombatService
     {
         if (s.Role == null || s.Progress == null || _data.Row("SkillConfig", skillRowId) is not { } row) return;
         var stats = _character.Stats(s);
-        var attacker = new Fighter(stats[103], stats[104], stats[109], stats[111], s.Progress.Level, 1) { EleIgnore = stats[235], PenDef = stats[217], PenDefPct = stats[218], PenMdef = stats[219], PenMdefPct = stats[220] };
+        var attacker = new Fighter(stats[103], stats[104], stats[109], stats[111], s.Progress.Level, AttackElement(s, row)) { EleIgnore = stats[235], PenDef = stats[217], PenDefPct = stats[218], PenMdef = stats[219], PenMdefPct = stats[220] };
         var defender = new Fighter(0, 0, target.Template.Flee, 0, target.Template.Level, target.Template.Element)
-            { Def = target.Template.Def, Mdef = target.Template.Mdef, Flee = target.Template.Flee };
+        { Def = target.Template.Def, Mdef = target.Template.Mdef, Flee = target.Template.Flee };
         var (amount, result) = Damage(attacker, defender, row);
         if (amount <= 0) return;
         if (percent != 100) amount = amount * percent / 100;

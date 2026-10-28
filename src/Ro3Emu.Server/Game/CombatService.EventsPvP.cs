@@ -155,7 +155,7 @@ public sealed partial class CombatService
     {
         if (!options.Value.DamageBonusAttributes || damage <= 0) return damage;
         bool magic = Ro3Emu.Server.Data.GameData.Int(row, "_iDmgType") == 2, ranged = Ro3Emu.Server.Data.GameData.Int(row, "_iDistanceType") == 2, critical = result == DamageHitResult.Critical;
-        int element = Ro3Emu.Server.Data.GameData.Int(row, "_iEleType") is > 1 and var e ? (int)e : 1;
+        int element = HitElement(source, row);
         damage = ApplyDamageBonuses(damage, magic, ranged, Ro3Emu.Server.Data.GameData.Int(row, "_iIsNormalAtk") == 1, critical, id => attack[id], null, element, pvp: true);
         foreach (var negate in IncomingHitNegators) if (negate(target, magic)) return 0;
         return ApplyDamageReductions(damage, magic, ranged, critical, id => defend[id], null, element, pvp: true);
@@ -167,7 +167,7 @@ public sealed partial class CombatService
     {
         var attack = _character.Stats(source); var defend = _character.Stats(target);
         var a = new Fighter(attack[AttributeId.Atk], attack[AttributeId.Matk], attack[AttributeId.Hit], attack[AttributeId.Cri],
-            source.Progress!.Level, 1)
+            source.Progress!.Level, AttackElement(source, row))
         {
             CritBonus = attack[200] + attack[237], EleIgnore = attack[235],
             PenDef = attack[217], PenDefPct = attack[218], PenMdef = attack[219], PenMdefPct = attack[220],

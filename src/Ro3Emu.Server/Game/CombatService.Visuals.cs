@@ -243,8 +243,7 @@ public sealed partial class CombatService
         if (!options.Value.DamageBonusAttributes || amount <= 0) return amount;
         var stats = _character.Stats(s);
         return ApplyDamageBonuses(amount, GameData.Int(row, "_iDmgType") == 2, GameData.Int(row, "_iDistanceType") == 2,
-            GameData.Int(row, "_iIsNormalAtk") == 1, result == DamageHitResult.Critical, id => stats[id], SideOf(target),
-            GameData.Int(row, "_iEleType") is > 1 and var element ? (int)element : 1);
+            GameData.Int(row, "_iIsNormalAtk") == 1, result == DamageHitResult.Critical, id => stats[id], SideOf(target), HitElement(s, row));
     }
 
     /// <summary>

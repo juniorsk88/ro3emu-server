@@ -162,4 +162,19 @@ public sealed class CombatTableRulesTests
         Assert.Equal(new TowerService.Suppression(0, 0, 0), TowerService.Suppress(Data, floor, 5400, 9000));
         Assert.All(Data.Table("PetFloorConfig").Values, f => Assert.Equal(1, GameData.Int(f, "_iPowerSuppress")));
     }
+
+    [ClientDataFact]
+    public void TheClientsArrowsGiveTheElementTheirTextSays()
+    {
+        int ElementOf(int arrow)
+        {
+            var item = Data.Row("ItemConfig", arrow)!.Value;
+            return CombatService.ArrowElement(Data.TextOf(item, "_iDescription"), new Ro3Emu.Server.Data.Config.ItemConfig(item).Param1);
+        }
+        // Common 1002010 and Steel 1002011 (its _kParam1 is 6, its text names no property) stay neutral; Fire 4, Crystal 5 water, Silver 7 holy, Stone 3 earth.
+        Assert.Equal([1, 1, 4, 5, 7, 3], new[] { 1002010, 1002011, 1002012, 1002013, 1002014, 1002016 }.Select(ElementOf));
+        // The bow skills are the ones the data marks as shot from the arrow: Arrow Attack, Double Strafe; Fire Bolt is not.
+        Assert.Equal(1, new Ro3Emu.Server.Data.Config.SkillConfig(Data.Row("SkillConfig", 1300001)!.Value).AffectByArrow);
+        Assert.Equal(0, new Ro3Emu.Server.Data.Config.SkillConfig(Data.Row("SkillConfig", 1200401)!.Value).AffectByArrow);
+    }
 }

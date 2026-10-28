@@ -153,6 +153,20 @@ public sealed class SkillVisualTests : IDisposable
     }
 
     [Fact]
+    public void AnArrowGivesItsElementOnlyWhenItsTextSaysItChangesTheAttackProperty()
+    {
+        const string fire = "An arrow with a tip that can be set ablaze.\n<color=#6e8bc8>Equipping Fire Arrow with a bow changes your attack property to Fire.</color>";
+        Assert.Equal(4, CombatService.ArrowElement(fire, "4"));
+        Assert.Equal(7, CombatService.ArrowElement(fire.Replace("Fire", "Holy"), "7"));
+        // Steel Arrow: _kParam1 6, but its text names no property; the common Arrow: 1, neutral.
+        Assert.Equal(1, CombatService.ArrowElement("An arrow made of steel with considerable attack power.", "6"));
+        Assert.Equal(1, CombatService.ArrowElement("A common Arrow that can be obtained anywhere.", "1"));
+        // A parameter that is no element id changes nothing.
+        Assert.Equal(1, CombatService.ArrowElement(fire, ""));
+        Assert.Equal(1, CombatService.ArrowElement(fire, "11"));
+    }
+
+    [Fact]
     public void DamageReductionAttributesCutWhatMonstersDealAndHealingAttributesScaleHeals()
     {
         long Stat(int id) => id switch { 216 => 1000, 212 => 500, 214 => 2000, 232 => 500, 210 => 3000, _ => 0 };
