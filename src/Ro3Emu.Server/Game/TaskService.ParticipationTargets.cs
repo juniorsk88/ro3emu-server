@@ -80,6 +80,7 @@ public sealed partial class TaskService
             _loop.PostOwned(s, () => ProgressAsync(s, null, t => t switch
             {
                 [TLeagueJoin, var stage, _] when stage == 0 || stage == round => 1,
+                [TTournamentJoins, _] => 1,
                 [TLeagueScore, var stage, var points, _] when stage + 1 == round && score > points => 1,
                 _ => 0,
             }), "quest guild league");
@@ -123,5 +124,5 @@ public sealed partial class TaskService
 
     /// <summary>106018: the member is at the Bonfire Party (once per event day, GuildCampfireService).</summary>
     public void OnCampfireJoined(GameSession s) =>
-        _loop.PostOwned(s, () => ProgressAsync(s, TCampfire, t => t.Length == 2 ? 1 : 0), "quest campfire");
+        _loop.PostOwned(s, () => ProgressAsync(s, null, t => t is [TCampfire or TKaoHuoJoins, _] ? 1 : 0), "quest campfire");
 }

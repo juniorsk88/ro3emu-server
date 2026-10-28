@@ -167,6 +167,10 @@ public sealed partial class TaskService
     // each accepted bid counts once since acceptance (inferred: the channel is not filtered).
     private const int TChatCount = 103020, TAuctionJoins = 103003;
 
+    // 103013 CheckGuildKaoHuoJoinCnt [n] (the guild campfire, like 106018), 103015 CheckGuildTournamentJoinCnt [n] (a Guild League match, like 106603) and 103016
+    // CheckOnHookTime [minutes] (the wild AFK time of the day, like 106901 in seconds): the starter quests 100016, 100018, 100019 and 306060 (inferred).
+    private const int TKaoHuoJoins = 103013, TTournamentJoins = 103015, TOnHookMinutes = 103016;
+
     internal Task OnChatSentAsync(GameSession s) => ProgressAsync(s, TChatCount, t => 1);
 
     internal Task OnBidPlacedAsync(GameSession s) => ProgressAsync(s, TAuctionJoins, t => 1);
@@ -201,6 +205,7 @@ public sealed partial class TaskService
         [TTerritoryPoints, var n] => n,
         [TChatCount, var n, _] => n,
         [TAuctionJoins, var n] => n,
+        [TKaoHuoJoins or TTournamentJoins or TOnHookMinutes, var n] => n,
         [TDungeonBoss, _, var n] => n,
         [TPlot or TBaseLevel or TSkillPoints or TStatPoints or TResonance or TTotalRefine or TRefineSlots
             or TRefineCount or TMvp or TMvpOnce or TCargo or TAfkSeconds or TTimedBattle or TCaravan
@@ -305,6 +310,7 @@ public sealed partial class TaskService
             TBaseLevel => p.Level,
             // 500130 [106901,3600] displays whole consumed minutes. Reading the committed
             // daily counter also repairs a disconnect between 5035 persistence and the quest sync (inferred).
+            TOnHookMinutes => s.WildAfk is { } hook && s.Daily?.DailyEpoch == hook.DailyEpoch ? hook.ConsumedTodaySeconds / 60 : 0,
             TAfkSeconds => s.WildAfk is { } afk && s.Daily?.DailyEpoch == afk.DailyEpoch ? afk.ConsumedTodaySeconds : 0,
             TJobRank => _data.Row("JobConfig", p.Career) is { } job && GameData.Int(job, "_iJobRank") >= t[1] ? 1 : 0,
             TSkillPoints => _skills.SpentPoints(p),
