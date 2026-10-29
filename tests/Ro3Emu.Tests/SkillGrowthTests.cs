@@ -234,7 +234,7 @@ public sealed class SkillGrowthTests : IAsyncLifetime
         foreach (var (group, slot) in new[] { (11000, 4), (10000, 5) })
         {
             await alice.SendGameAsync(SkillService.SkillLoad, new SkillLoadReq
-                { OpType = SkillLoadOperation.SkillLoadOpLoad, IsManual = true, SocketNum = slot, Info = new SkillData { SkillId = group, SkillLevel = 1 } });
+            { OpType = SkillLoadOperation.SkillLoadOpLoad, IsManual = true, SocketNum = slot, Info = new SkillData { SkillId = group, SkillLevel = 1 } });
             Assert.Equal(0, (await Next(alice, SkillService.SkillLoad, SkillLoadResp.Parser)).Result);
         }
     }

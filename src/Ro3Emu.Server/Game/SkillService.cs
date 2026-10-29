@@ -208,8 +208,11 @@ public sealed class SkillService
         {
             var blank = new SkillPlan { IsUnlock = true };
             foreach (int group in skillData.SkillList)
-                blank.SkillAssigns[group] = new SkillData { SkillId = group,
-                    SkillLevel = normals.Contains(group) ? 1 : Initial(p, group) };
+                blank.SkillAssigns[group] = new SkillData
+                {
+                    SkillId = group,
+                    SkillLevel = normals.Contains(group) ? 1 : Initial(p, group)
+                };
             blank.SkillQueue[0] = new SkillData(); // paired by the client even in a fresh plan.
             blank.ManualLoadSkill.Add(new SkillData());
             blank.AutoLoadSkill.Add(new SkillData());
@@ -425,8 +428,11 @@ public sealed class SkillService
             }
             foreach (int group in generated.SkillList)
                 if (!plan.SkillAssigns.ContainsKey(group))
-                    plan.SkillAssigns[group] = new SkillData { SkillId = group,
-                        SkillLevel = IsNormalGroup(session.Progress!, group) ? 1 : Initial(session.Progress!, group) };
+                    plan.SkillAssigns[group] = new SkillData
+                    {
+                        SkillId = group,
+                        SkillLevel = IsNormalGroup(session.Progress!, group) ? 1 : Initial(session.Progress!, group)
+                    };
             var preview = CharacterService.GenreCloneProgress(session.Progress!);
             preview.Skills.Clear();
             foreach (int group in generated.SkillList)
