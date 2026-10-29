@@ -175,8 +175,12 @@ public sealed partial class CombatService
                     .OrderBy(p => Distance(p.Position, center)).Take((int)Math.Max(1, GameData.Int(row, "_iTargetMax"))));
                 if (allies.Count == 0 && Relation(row, true, true)) allies.Add(s);
             }
+            // Highness Heal restores the caster as well as its selected ally.
+            if (chosenAllies == null && script == "HighHeal" && allies.Count > 0 && !allies.Contains(s)) allies.Add(s);
         }
         var stats = _character.Stats(s);
+        var psalm = field == null && friendly && allies.Count > 0 ? EchoPsalm(s, row, stats) : null;
+        if (psalm is { Shield: > 0 } psalmInfo) s.SkillProtocol.EchoPsalmReadyMs = Now + psalmInfo.Cooldown;
         var attacker = new Fighter(stats[103], stats[104], stats[109], stats[111], s.Progress!.Level, AttackElement(s, row)) { CritBonus = stats[200] + stats[237], EleIgnore = stats[235], PenDef = stats[217], PenDefPct = stats[218], PenMdef = stats[219], PenMdefPct = stats[220] };
         var hit = new SkillHitInfo
         {
@@ -240,6 +244,8 @@ public sealed partial class CombatService
             foreach (var recipient in friendly ? allies : new List<GameSession> { s })
             {
                 if (!CanApplyMoreEffects()) break;
+                if (psalm is { Shield: > 0 } blessing)
+                    await _buffs.AddSupportAsync(recipient, blessing.Buff, blessing.Duration, castingRole.Id, blessing.Shield);
                 if (field == null)
                 {
                     int buffIndex = 0;
@@ -864,7 +870,7 @@ public sealed partial class CombatService
     private (long Amount, DamageHitResult Result) MonsterHitDamage(GameSession s, Fighter attacker, MonsterUnit target,
         JsonElement row, string script)
     {
-        var (amount, result) = Damage(attacker, MonsterFighter(target), row, script == "Heal" ? 1 : SonicBlowBranch(s, target, row),
+        var (amount, result) = Damage(attacker, MonsterFighter(target), row, script == "Heal" ? 1 : Math.Max(SonicBlowBranch(s, target, row), SoulStrikeBranch(row, target.Template.Element)),
             GuardianPetRules.CriticalChance(row) + SkillParameterRules.CritChance(s, _data, row),
             GuardianPetRules.CriticalAtHp(row, target.Hp, target.Template.MaxHp));
         if (row.TryGetProperty("_ro3GuardianFixedHit", out var fixedValue))

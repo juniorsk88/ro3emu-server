@@ -693,6 +693,8 @@ public sealed partial class CombatService : IGameTicker
         // Soul Expansion launches "${2} bursts ... dealing @{1} instances of damage equal to MATK * ${3}%": its two equal entries are two bursts, delivered
         // as one number. (inferred: the other multi-valued skills mix branches and hits, and need their own description read first)
         if (ratios.Length > 1 && new Ro3Emu.Server.Data.Config.SkillConfig(skill).ScriptLogic is "SoulExpansion" or "SoulExpansion_Copy") p1 = ratios.Sum();
+        // Piercing Shadow's first two components add to the total stated in its description.
+        if (ratios.Length >= 2 && new Ro3Emu.Server.Data.Config.SkillConfig(skill).ScriptLogic == "wudizhan") p1 = ratios[0] + ratios[1];
         double dmg = (magic ? a.Matk : a.Atk) * p1 / 10000 + p2;
         // Defense: def / (def + ParDef 20 × the defender's level), the shape of the client's damage-reduction tooltip.
         double def = magic ? b.Mdef : b.Def;

@@ -23,6 +23,7 @@ public sealed partial class CombatService
     {
         public Dictionary<int, int> TemporarySlotRows { get; } = new();
         public string ParameterSignature { get; set; } = "";
+        internal long EchoPsalmReadyMs { get; set; }
         public bool TrainingPaused { get; set; }
         public Dictionary<(long Target, bool White, int Tag), bool> SkillSelection { get; } = new();
     }

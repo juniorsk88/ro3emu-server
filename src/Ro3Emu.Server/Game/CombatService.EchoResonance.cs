@@ -85,4 +85,19 @@ public sealed partial class CombatService
         if (normal.Length == 0 || enhanced.DamageParam1.Length == 0) return [];
         return [new SkillParameterRules.Modifier(11604, 29, 1, enhanced.DamageParam1[0] - normal[0], 0)];
     }
+
+    // Battle Chant Harmony - Psalm: SkillConfig 11430601 and Highness Heal's mode-1 buff tuple.
+    private (int Buff, int Duration, int Cooldown, long Shield)? EchoPsalm(GameSession session, JsonElement row, StatSheet stats)
+    {
+        if (new SkillConfig(row).ScriptLogic != "HighHeal" || _character.MatchAttributes?.Invoke(session) != null
+            || session.SkillProtocol.EchoPsalmReadyMs > Now || !EmblemService.ResonanceSkills(session, _data).Contains(11430601)
+            || SkillConfig.Get(_data, 11430601) is not { } effect || effect.DescData.Length < 3
+            || !int.TryParse(effect.DescData[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int duration)
+            || !int.TryParse(effect.DescData[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int cooldown)
+            || !double.TryParse(effect.DescData[2], NumberStyles.Float, CultureInfo.InvariantCulture, out double percent)
+            || !ConfiguredModeRows.TryGetValue((14301, (int)new SkillConfig(row).Level, 1), out int variant)
+            || SkillConfig.Get(_data, variant) is not { } season || season.Buff1.FirstOrDefault() is not { Length: >= 1 } buff
+            || duration <= 0 || cooldown <= 0 || percent <= 0) return null;
+        return ((int)buff[0], duration * 1000, cooldown * 1000, (long)Math.Floor(stats[104] * percent / 100));
+    }
 }

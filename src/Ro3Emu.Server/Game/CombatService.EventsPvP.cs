@@ -181,7 +181,7 @@ public sealed partial class CombatService
         };
         var b = new Fighter(0, 0, 0, 0, target.Progress!.Level, ArmorElement(target))
         { Def = defend[AttributeId.Def], Mdef = defend[AttributeId.Mdef], Flee = defend[AttributeId.Flee], ResCri = defend[AttributeId.ResCri], CritReduce = defend[238], EleResist = defend[236] };
-        var (damage, result) = Damage(a, b, row, bonusCrit: GuardianPetRules.CriticalChance(row),
+        var (damage, result) = Damage(a, b, row, SoulStrikeBranch(row, b.Element), bonusCrit: GuardianPetRules.CriticalChance(row),
             forceCrit: GuardianPetRules.CriticalAtHp(row, defend[AttributeId.Hp], defend[AttributeId.MaxHp]));
         damage = PvpAttributeDamage(source, target, row, result, damage, attack, defend);
         damage = GuardianPetRules.DirectDamage(row, damage);

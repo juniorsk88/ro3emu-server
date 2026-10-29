@@ -23,9 +23,14 @@ range vector through the client's `SkillRange` parameter (36, `LC_DynamicParamMg
 selected as an area skill despite `_iRangeType` 1: its description and `_iTargetMax` specify multiple
 enemies within the radius.
 The match's replacement build does not receive the player's Echo effects.
+Battle Chant Harmony - Psalm (`11430601`) heals the caster along with the selected ally and grants both
+the enhanced Highness Heal row's shield. Its duration, MATK percentage and shield cooldown come from the
+resonance description; the cooldown is held in the current session, and reconnect persistence is unknown.
 
 These are partial implementations, not the complete seasonal skill system. In particular, Pixel Thrust's
 conditional cooldown reset, Mixed Accompaniment's stacks, Golden Moon Ring's conditional slow, and Thomas Flare's movement effect are not implemented
 here. The other stage-2 and stage-3 skills remain unsupported. Tetra Vortex's separate hit
 execution is limited by the existing combat model; applying its ratio to the configured vector does not by
 itself implement all of its hits.
+The Chinese description states a total across Water, Fire, Earth and Wind; the four equal damage parameters
+and six animation points do not establish how that total is divided into authoritative hits.

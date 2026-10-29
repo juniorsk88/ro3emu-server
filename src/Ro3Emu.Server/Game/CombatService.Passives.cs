@@ -127,6 +127,10 @@ public sealed partial class CombatService
         return result;
     }
 
+    // Soul Strike's extra damage applies to Undead element (EleConfig 10), not race.
+    internal static int SoulStrikeBranch(JsonElement row, int element) =>
+        new SkillConfig(row).SkillId == 12008 && element == 10 ? 1 : 0;
+
     /// <summary>
     /// Sonic Blow: "If the target's HP is at or below ${4}%, increases the percentage damage multiplier of [Sonic Blow] by
     /// ${5}%." Its damage pairs are [plain, +20%, +25%] and its _kLogicData [2000, 101, 5000] the 20% and the 50% (in basis
