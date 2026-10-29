@@ -5,6 +5,8 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
+using Ro3Emu.Server.Data;
 using Ro3Emu.Server;
 using Ro3Emu.Server.Accounts;
 using Ro3Emu.Server.Accounts.Persistence;
@@ -31,6 +33,38 @@ public sealed class GiftCodeTests(GiftCodeTests.HostFixture fixture) : IClassFix
     }
 
     private sealed record Player(string Account, string Token, long Role);
+
+    private sealed class GiftLog : ILogger<GiftCodeService>
+    {
+        public List<string> Entries { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel level) => true;
+        public void Log<TState>(LogLevel level, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => Entries.Add(formatter(state, exception));
+    }
+
+    [Fact]
+    public async Task RedemptionLogsDoNotExposeCodesOrAccountTokens()
+    {
+        var player = await PlayerAsync(_host);
+        string validCode = Unique("secret"), invalidCode = Unique("secret");
+        Panel(_host, validCode, $"[[{Potion},1]]");
+        Panel(_host, invalidCode, "[[0,1]]");
+        var log = new GiftLog();
+        var service = new GiftCodeService(_host.Service<AccountStore>(), _host.Service<RoleStore>(),
+            _host.Service<MailService>(), _host.Service<GameData>(), _host.Service<GiftCodeLimiter>(), TimeProvider.System, log);
+
+        Assert.Equal(ErrorCodes.GiftCardUseSuccess, (await service.RedeemAsync(new(player.Account, player.Token, player.Role.ToString(CultureInfo.InvariantCulture), validCode))).Code);
+        Assert.Equal(ErrorCodes.GiftCardInvalidItems, (await service.RedeemAsync(new(player.Account, player.Token, player.Role.ToString(CultureInfo.InvariantCulture), invalidCode))).Code);
+        Assert.Equal(2, log.Entries.Count);
+        Assert.All(log.Entries, entry =>
+        {
+            Assert.DoesNotContain(validCode, entry);
+            Assert.DoesNotContain(invalidCode, entry);
+            Assert.DoesNotContain(player.Token, entry);
+        });
+    }
+
 
     private static string Unique(string prefix) => prefix + Guid.NewGuid().ToString("N")[..10];
 

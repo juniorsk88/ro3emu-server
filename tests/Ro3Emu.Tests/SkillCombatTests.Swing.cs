@@ -69,4 +69,17 @@ public sealed partial class SkillCombatTests
         await archer.SendGameAsync(CombatService.UseSkill, new CastSkillReq { SkillId = ArcherAttack, TargetId = target.Uid });
         Assert.Equal(0, (await Next(archer, CombatService.UseSkill, CastSkillRsp.Parser)).Result);
     }
+    [ClientDataFact]
+    public async Task AnArcherNormalAttackCanYieldToTheNextSkill()
+    {
+        await using var archer = await InWorld("Archer");
+        await Gm("archer", "!job 3100");
+        var target = await Target("archer", stationary: true);
+        await archer.SendGameAsync(CombatService.UseSkill, new CastSkillReq { SkillId = ArcherAttack, TargetId = target.Uid });
+        Assert.Equal(0, (await Next(archer, CombatService.UseSkill, CastSkillRsp.Parser)).Result);
+        await archer.SendGameAsync(CombatService.SkillInterrupt, new SkillInterruptReq
+        { InterruptSkillId = ArcherAttack, NxtSkill = new CastSkillReq { SkillId = ArcherAttack, TargetId = target.Uid } });
+        Assert.True((await Next(archer, CombatService.SkillInterrupt, SkillInterruptResp.Parser)).IsInterruptSucc);
+    }
+
 }

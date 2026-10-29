@@ -43,7 +43,7 @@ public sealed partial class GiftCodeService(AccountStore accounts, RoleStore rol
         try { return await RedeemCoreAsync(request); }
         catch (Exception e) when (e is not OperationCanceledException)
         {
-            LogRequestFailed(log, e, request.Code ?? "");
+            LogRequestFailed(log, e);
             return Answer(ErrorCodes.GiftCardFailed);
         }
     }
@@ -61,7 +61,7 @@ public sealed partial class GiftCodeService(AccountStore accounts, RoleStore rol
         if (state.Refusal(clock.GetUtcNow().ToUnixTimeSeconds()) is { } refusal) return Answer(refusal);
         if (Attachments(state.Items) is not { } items)
         {
-            LogInvalidItems(log, state.Code, state.Items);
+            LogInvalidItems(log, state.Items);
             return Answer(ErrorCodes.GiftCardInvalidItems);
         }
         return await GrantAsync(state, account, role.Id, items);
@@ -124,10 +124,10 @@ public sealed partial class GiftCodeService(AccountStore accounts, RoleStore rol
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
-            LogFailed(log, e, state.Code, role);
+            LogFailed(log, e, role);
             return Answer(ErrorCodes.GiftCardFailed);
         }
-        LogRedeemed(log, state.Code, account, role, key);
+        LogRedeemed(log, account, role);
         return Answer(ErrorCodes.GiftCardUseSuccess);
     }
 
@@ -159,15 +159,15 @@ public sealed partial class GiftCodeService(AccountStore accounts, RoleStore rol
         _ => "The code could not be redeemed. Please try again later.",
     });
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Gift code {Code} has invalid items {Items}")]
-    private static partial void LogInvalidItems(ILogger logger, string code, string items);
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Gift code has invalid items {Items}")]
+    private static partial void LogInvalidItems(ILogger logger, string items);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "Gift code {Code} for role {Role} failed")]
-    private static partial void LogFailed(ILogger logger, Exception exception, string code, long role);
+    [LoggerMessage(Level = LogLevel.Error, Message = "Gift code redemption for role {Role} failed")]
+    private static partial void LogFailed(ILogger logger, Exception exception, long role);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Gift code {Code} redeemed by {Account} for role {Role} ({Key})")]
-    private static partial void LogRedeemed(ILogger logger, string code, string account, long role, string key);
+    [LoggerMessage(Level = LogLevel.Information, Message = "Gift code redeemed by {Account} for role {Role}")]
+    private static partial void LogRedeemed(ILogger logger, string account, long role);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "Gift code request for {Code} failed")]
-    private static partial void LogRequestFailed(ILogger logger, Exception exception, string code);
+    [LoggerMessage(Level = LogLevel.Error, Message = "Gift code request failed")]
+    private static partial void LogRequestFailed(ILogger logger, Exception exception);
 }

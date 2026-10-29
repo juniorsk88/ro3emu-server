@@ -112,7 +112,7 @@ public sealed partial class CombatService
             // chanted skill asked again before its hit (the key held down, Fire Bolt's 0.5 s cooldown inside its 1.0 s
             // chant) would cancel every cast before it landed. An instant skill (no chant) asked again still replaces it.
             else if (s.SkillCast is { Cancelled: false } active && Now < active.StartMs + active.ChantMs + active.ActionMs
-                && (SkillNoCancel && GameData.Int(active.Row, "_iIsNormalAtk") != 1 || !new SkillConfig(row.Value).CancelCast
+                && (SkillNoCancel && !new SkillConfig(active.Row).IsNormalAttack(_data) || !new SkillConfig(row.Value).CancelCast
                     || active.ChantMs > 0 && !active.Resolved && GameData.Int(active.Row, "_iSkillID") == group || SwingInFlight(active, row.Value, req))) error = ErrorCodes.SkillBusy;
             else error = ValidateTarget(s, row.Value, req, origin, owned == null ? WalkSlack(s) : 0,
                 _data.Row("SkillConfig", request.SkillId) is { } askedRow ? Range(askedRow) : 0);
@@ -552,7 +552,7 @@ public sealed partial class CombatService
         bool valid = req == null || req.InterruptSkillId == 0 || req.InterruptSkillId == s.SkillCast?.Request.SkillId
             || req.InterruptSkillId == s.Attack?.SkillId || _eventAttacks.TryGetValue(s, out var eventAttack) && req.InterruptSkillId == eventAttack.SkillId;
         // SkillNoCancel: the client's auto-battle asks "interrupt this and cast the next skill"; the running skill finishes instead.
-        if (SkillNoCancel && req?.NxtSkill != null && s.SkillCast is { Cancelled: false } running && GameData.Int(running.Row, "_iIsNormalAtk") != 1)
+        if (SkillNoCancel && req?.NxtSkill != null && s.SkillCast is { Cancelled: false } running && !new SkillConfig(running.Row).IsNormalAttack(_data))
         {
             await s.SendGameAsync(SkillInterrupt, new SkillInterruptResp { IsInterruptSucc = false });
             return;

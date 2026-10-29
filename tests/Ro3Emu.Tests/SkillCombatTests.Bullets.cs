@@ -30,7 +30,7 @@ public sealed partial class SkillCombatTests
         Assert.Equal(1200404, hit.ShowPoint);
         Assert.Equal(3, hit.Split);
         Assert.Single(mage.Inbox.Snapshot().Where(e => e.IsGame(CombatService.SkillBullet))
-            .Select(e => SkillFixTimeBulletNotify.Parser.ParseFrom(e.Body))
-            .Where(b => b.SkillConfigId == 1200403 && b.TargetId == target.Uid));
+            .Select(e => SkillFixTimeBulletNotify.Parser.ParseFrom(e.Body)),
+            b => b.SkillConfigId == 1200403 && b.TargetId == target.Uid);
     }
 }
