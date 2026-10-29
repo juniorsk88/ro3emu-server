@@ -116,8 +116,8 @@ public sealed class CardEffects
         combat.IncomingHitNegators.Add(NegateMagicHit);
         combat.ArmorElementOf = ArmorElement;
         combat.CastIgnoresControl = s => Passives(s).Any(p => GameData.Int(p.Row, "_iBuffID") == Phen);
-        combat.CardGuaranteesHostileBuff = (s, row, buff) => GameData.Int(row, "_iID") == 2004501
-            && buff / 100 == BuffService.StunGroup && Passives(s).Any(p => GameData.Int(p.Row, "_iBuffID") == 20535);
+        combat.CardGuaranteesHostileBuff = (s, row, buff) => new SkillConfig(row).Id == 2004501
+            && buff / 100 == BuffService.StunGroup && Passives(s).Any(p => new BuffConfig(p.Row).BuffId == 20535);
         combat.IncomingDamageAdjusters.Add(LessWhileSilencedAsync);
         combat.TakenAsync.Add(OnTakenAsync);
     }
@@ -393,17 +393,16 @@ public sealed class CardEffects
     {
         if (damage > 0 && attacker.Role != null && target.Role != null)
         {
-            if (GameData.Int(row, "_iID") == 2004501 && _character.Stats(target)[2000] > 0
-                && row.TryGetProperty("_kBuff2", out var statuses) && statuses.ValueKind == JsonValueKind.Array)
+            if (new SkillConfig(row) is { Id: 2004501 } skill && _character.Stats(target)[2000] > 0)
             {
                 var attackerRole = attacker.Role;
                 var targetRole = target.Role;
                 long scene = attacker.WorldScene;
-                foreach (var tuple in statuses.EnumerateArray())
+                foreach (var tuple in skill.Buff2)
                 {
                     if (!ReferenceEquals(attacker.Role, attackerRole) || !ReferenceEquals(target.Role, targetRole)
                         || attacker.SceneLoading || target.SceneLoading || attacker.WorldScene != scene || target.WorldScene != scene) break;
-                    if (tuple.ValueKind == JsonValueKind.Array && combat.RollHostileBuff(tuple, attacker, null, target, null, out int id, out int duration, row))
+                    if (combat.RollHostileBuff(JsonSerializer.SerializeToElement(tuple), attacker, null, target, null, out int id, out int duration, row))
                         await _buffs.AddAsync(target, id, duration, attackerRole.Id);
                 }
             }
