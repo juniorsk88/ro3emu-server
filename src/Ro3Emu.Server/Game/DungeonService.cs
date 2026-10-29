@@ -165,6 +165,10 @@ public sealed partial class DungeonService
         public JsonElement? Blessing { get; set; }
         /// <summary>The scripted scene actors shown now (also tracked by the room for cleanup).</summary>
         internal List<SceneActorUnit> SceneActors { get; } = new();
+        /// <summary>The scripted step's allied companions standing now (DungeonService.Companions; room props too).</summary>
+        internal List<CompanionUnit> Companions { get; } = [];
+        /// <summary>The companions (NPC, point) that fell in this run: they do not come back.</summary>
+        internal HashSet<(int NpcId, long Point)> FallenCompanions { get; } = [];
         internal GuildChallengeService.Run? GuildChallenge { get; set; }
         /// <summary>Dracula's Lair: DraculaWeddingService owns admission, the bride, the key and the settlement.</summary>
         internal DraculaWeddingService.Run? Dracula { get; set; }
@@ -213,7 +217,9 @@ public sealed partial class DungeonService
         return 0;
     }
 
-    public async Task EnterAsync(GameSession s, EnterDungeonReq req)
+    /// <param name="alone">Enter only this role even in a party (a story region stepped into by a member who is not the
+    /// leader, <see cref="EnterFromRegionAsync"/>).</param>
+    public async Task EnterAsync(GameSession s, EnterDungeonReq req, bool alone = false)
     {
         await DeliverPendingAsync(s);
         if (GuildChallengeEnter != null && await GuildChallengeEnter(s, req)) return;
@@ -221,7 +227,7 @@ public sealed partial class DungeonService
         int error = plan == null ? ErrorCodes.DungeonDataMissing : Admission(s, plan, continuation: true);
         if (error == 0 && Preparing(s)) error = ErrorCodes.DungeonPreparing;
         var membership = s.Role != null ? _teams.TeamOf(s.Role.Id) : default;
-        long[] ids = s.Role == null ? [] : plan?.MaxPlayers == 1 ? [s.Role.Id] : _teams.MembersOf(s.Role.Id).ToArray();
+        long[] ids = s.Role == null ? [] : alone || plan?.MaxPlayers == 1 ? [s.Role.Id] : _teams.MembersOf(s.Role.Id).ToArray();
         var online = _sessions.All().Where(p => p.Role != null).ToDictionary(p => p.Role!.Id);
         var members = ids.Where(online.ContainsKey).Select(id => online[id]).ToArray();
         if (error == 0 && ids.Length > 1 && membership.Leader != s.Role!.Id && !_options.DungeonAnyMemberEnter) error = ErrorCodes.NoPermission;
@@ -244,7 +250,7 @@ public sealed partial class DungeonService
             || selected.DungeonId != 0 && selected.DungeonId != s.InstanceId)) error = ErrorCodes.Parameter;
         await s.SendGameAsync(Enter, new EnterDungeonRsp { Result = error });
         if (error != 0) return;
-        if (members.Length == 1) { await BeginAsync(plan!, members, s.Role!.Id, membership.TeamId); return; }
+        if (members.Length == 1) { await BeginAsync(plan!, members, s.Role!.Id, alone ? 0 : membership.TeamId); return; }
         // A member who is not the party leader may start it (Ro3Emu:DungeonAnyMemberEnter): the leader still owns the room.
         var owner = members.FirstOrDefault(m => m.Role!.Id == membership.Leader) ?? s;
         var p = new Preparation { Plan = plan!, Members = members, Leader = owner, TeamId = membership.TeamId };
@@ -439,6 +445,7 @@ public sealed partial class DungeonService
         }
         if (a.Dracula is { } dracula) snapshot.Vars.Add(dracula.Vars());
         if (FunctionButtons(a) is { } buttons) snapshot.Vars.Add(buttons);
+        if (GuideWays(a) is { } ways) snapshot.Vars.Add(ways);
         if (a.Preparing)
         {
             // (inferred) The preparation phase is the map's initializing state, ending when the boss fight begins.
@@ -608,8 +615,12 @@ public sealed partial class DungeonService
             // Ro3Emu:DungeonMissingMemberPercent; not original behaviour).
             if (a.Plan.Multi != null && soloScale.For(a.Room.ActiveMembers.Count(), a.Plan.MinPlayers, a.Plan.MaxPlayers) is { } scale
                 && (waveTemplate ?? _monsters.Template(spawn.NpcId)) is { } scaled)
-                waveTemplate = scaled with { MaxHp = Math.Max(1, scaled.MaxHp * scale.Hp / 100),
-                    Atk = scaled.Atk * scale.Attack / 100, Matk = scaled.Matk * scale.Attack / 100 };
+                waveTemplate = scaled with
+                {
+                    MaxHp = Math.Max(1, scaled.MaxHp * scale.Hp / 100),
+                    Atk = scaled.Atk * scale.Attack / 100,
+                    Matk = scaled.Matk * scale.Attack / 100
+                };
             var monster = await _instances.SpawnAsync(a.Room, spawn.NpcId, spawn.Point, customTemplate: waveTemplate);
             if (a.Settled || a.Room.Closed)
             {
@@ -871,6 +882,7 @@ public sealed partial class DungeonService
             a.Settled = true;
             await _instances.ClearMonstersAsync(a.Room);
             a.SceneActors.Clear(); // removed with the room's monsters
+            a.Companions.Clear();
             await BroadcastAsync(a, BaseInfo, Snapshot(a));
             await dracula.Owner.SettleAsync(a, won);
             return;
@@ -888,6 +900,7 @@ public sealed partial class DungeonService
         var auctionAwards = new List<ItemBaseInfo>();
         await _instances.ClearMonstersAsync(a.Room);
         a.SceneActors.Clear(); // removed with the room's monsters
+        a.Companions.Clear();
         foreach (var (s, roleId) in participants)
         {
             if (s.Role?.Id != roleId) continue;
@@ -952,6 +965,8 @@ public sealed partial class DungeonService
                 {
                     if (committed && goods.Count > 0) await _character.ItemsChangedAsync(s, stats: false);
                     await s.SendGameAsync(Result, result);
+                    if (success) await HideGuideWaysAsync(s, a);
+                    if (success && LeavesAfterClear(a)) ScheduleLeaveAfterClear(s, a);
                     if (success && a.Plan.Multi != null)
                     {
                         var award = new SyncMultiDungeonAwardNotify

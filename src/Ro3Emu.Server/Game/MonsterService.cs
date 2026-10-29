@@ -25,6 +25,7 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
     {
         this._reconstructed = reconstructed;
         _bossOptions = options?.Value.BossSkills ?? new BossSkillOptions();
+        _ro1Aggressive = Ro1Aggressive(options?.Value); // MonsterService.Ro1Aggression
         this._world = world;
         this._worldData = worldData;
         this._data = data;
@@ -36,9 +37,15 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
                 owner.Units.Remove(monster);
             return unit is MonsterUnit { BossSkills: not null } boss ? EndBossSkillsTask(boss, interrupt: false) ?? Task.CompletedTask : Task.CompletedTask;
         });
+        world.UnitRemoved.Add(ForgetCompanionTargets);
+        world.UnitRemoved.Add(ForgetSurroundSlot);
     }
 
     private const long UidBase = 1L << 41;
+    /// <summary>
+    /// (inferred) The only AI whose monsters attack on sight (Familiar, Thief Bug Male, Poison Spore). The client does not
+    /// establish it: AIConfig 20000004 and 20000001 (the passive field monsters) are identical in all their fields.
+    /// </summary>
     private const int AggressiveAi = 20000004;
 
     /// <summary>A walk segment is capped so a monster seen mid-way is re-synchronized soon.</summary>
@@ -46,6 +53,15 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
     /// <summary>Route searches (NavGrid.FindPath) the whole realm may start per game tick, and the cells one may expand: a monster behind a wall plans once and follows the route (<see cref="PathStep"/>).</summary>
     private const int PathSearchesPerTick = 2, PathMaxNodes = 800;
     private int _pathBudget = PathSearchesPerTick;
+
+    /// <summary>A chasing monster re-paths toward its target this often, or when its segment ended.</summary>
+    private const int ChaseRepathMs = 400;
+
+    /// <summary>A chase step shorter than this is not walked.</summary>
+    internal const float MinChaseStep = 0.2f;
+
+    /// <summary>The chase stops this share of the attack range away from the target.</summary>
+    private const float ApproachShare = 0.8f;
 
     private readonly Dictionary<int, MonsterTemplate?> _templates = new();
     private sealed class SpawnState
@@ -71,13 +87,26 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
 
     public MonsterTemplate? Template(int npcId)
     {
-        if (!_templates.TryGetValue(npcId, out var t)) _templates[npcId] = t = Build(npcId);
+        if (!_templates.TryGetValue(npcId, out var t)) _templates[npcId] = t = Build(npcId, machine: false);
         return t;
     }
 
-    private MonsterTemplate? Build(int npcId)
+    private readonly Dictionary<int, MonsterTemplate?> _machineTemplates = [];
+
+    /// <summary>
+    /// A siege war machine's stats: the cannons and vehicles are NPCConfig _iNPCType 2 rows (sub types 102 and 103), whose
+    /// _iAttributeVariated and _iLevel select an AttriMonsterConfig row as a monster's do (222059: 69 170 HP). The client
+    /// shows its HP bar from properties 101 and 2000 like a monster's.
+    /// </summary>
+    public MonsterTemplate? MachineTemplate(int npcId)
     {
-        if (_data.Row("NPCConfig", npcId) is not { } npc || GameData.Int(npc, "_iNPCType") != 1) return null;
+        if (!_machineTemplates.TryGetValue(npcId, out var t)) _machineTemplates[npcId] = t = Build(npcId, machine: true);
+        return t;
+    }
+
+    private MonsterTemplate? Build(int npcId, bool machine)
+    {
+        if (_data.Row("NPCConfig", npcId) is not { } npc || !machine && GameData.Int(npc, "_iNPCType") != 1) return null;
         int level = (int)GameData.Int(npc, "_iLevel");
         long attrId = GameData.Int(npc, "_iAttribute");
         if (attrId == 0) attrId = GameData.Int(npc, "_iAttributeVariated") * 1000 + level;
@@ -120,7 +149,7 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
             Hit: attr.ContainsKey(109) ? A(109) : level + 1, Flee: attr.ContainsKey(110) ? A(110) : level, Cri: A(111),
             speed, (int)GameData.Int(npc, "_iElement"), (int)GameData.Int(npc, "_iRace"), (int)GameData.Int(npc, "_iSize"),
             Math.Max(1, (int)GameData.Int(npc, "_iCamp")),
-            Aggressive: ai == AggressiveAi,
+            Aggressive: ai == AggressiveAi || _ro1Aggressive.Contains(npcId), // the RO1 reference (inferred), when switched on
             RoamDistance: speed > 0 ? Cm("_iRoamDis", 0) : 0, RoamTimeMs: aiRow is { } r2 ? (int)Math.Max(2000, GameData.Int(r2, "_iRoamTime")) : 8000,
             ViewRange: Cm("_iViewRange", 5), LeashDistance: aiRow is { } r3 && r3.TryGetProperty("_iUnFightParam", out var uf) && uf.ValueKind == JsonValueKind.Array
                 && uf.GetArrayLength() > 0 && GameData.Number(uf[0]) is { } leash ? (float)leash / 100 : Cm("_iChaseDistance", 18),
@@ -128,6 +157,9 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
         {
             Skills = BossBook(npcId, npc, skill),
             CastSpeed = A(AttributeId.CastSpeed),
+            SurroundDistance = SurroundSpacing(_data, ai),
+            BattleCallRange = aiRow is { } call && new Data.Config.AIConfig(call).BattleCallType == 1 ? new Data.Config.AIConfig(call).BattleCallDistance / 100f : 0,
+            AnswersBattleCall = aiRow is { } answer && new Data.Config.AIConfig(answer).BattleCallResponse == 1,
         };
     }
 
@@ -416,6 +448,7 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
             Fight(m, map, now);
             return;
         }
+        if (_companionTargets.Count > 0 && FightsCompanion(m, map, now)) return; // MonsterService.Companions
         if (m.Template.Aggressive && m.Viewers.Count > 0 && !m.Returning)
         {
             var near = NearestTarget(m);
@@ -484,14 +517,36 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
         await _world.ToUnitViewersAsync(monster, CombatService.AoiAttrChange, SpeedChange(monster, now));
     }
 
-    /// <summary>A player hit it (or came into view of an aggressive one): chase and attack.</summary>
-    public void Engage(MonsterUnit m, GameSession target)
+    /// <summary>A player hit it (or came into view of an aggressive one): chase and attack. A monster that enters the
+    /// fight calls its own into it (<see cref="CallIntoBattle"/>).</summary>
+    public void Engage(MonsterUnit m, GameSession target) => Engage(m, target, called: false);
+
+    private void Engage(MonsterUnit m, GameSession target, bool called)
     {
         if (m.Dead || m.WorldScene != target.WorldScene || TargetVisible?.Invoke(m, target) == false || m.Template.SpeedCm == 0 && m.Template.AttackRange <= 0) return;
-        if (m.Target == null) m.NextSwingMs = NowMs + 300;
+        bool entering = m.Target == null;
+        if (entering) m.NextSwingMs = NowMs + 300;
         m.ChaseActiveMs = NowMs;
         SetTarget(m, target);
         m.Returning = false;
+        if (entering && !called && m.Template.BattleCallRange > 0) CallIntoBattle(m, target);
+    }
+
+    /// <summary>
+    /// AIConfig battle call (server-only fields; the client never reads them): a monster whose AI has _iBattleCallType
+    /// 1 calls, as it enters a fight, the monsters within _iBattleCallDistance whose AI has _iBattleCallResponse 1.
+    /// Inferred: those of its camp in its instance, alive and not fighting yet, take on the same player; a called
+    /// monster does not call in turn (one call per fight, not a chain across the map).
+    /// </summary>
+    private void CallIntoBattle(MonsterUnit caller, GameSession target)
+    {
+        int camp = caller.CampOverride ?? caller.Template.Camp;
+        foreach (var unit in _world.Map(caller.WorldScene).Near(caller.X, caller.Z, caller.Template.BattleCallRange).ToArray())
+            if (unit is MonsterUnit ally && !ReferenceEquals(ally, caller) && !ally.Dead && ally.Hp > 0 && ally.Target == null
+                && ally.Template.AnswersBattleCall && ally.InstanceId == caller.InstanceId
+                && (ally.CampOverride ?? ally.Template.Camp) == camp
+                && Distance(ally.X, ally.Z, caller.X, caller.Z) <= caller.Template.BattleCallRange)
+                Engage(ally, target, called: true);
     }
 
     /// <summary>Authoritative target transitions, consumed by hatred/lock notifications and facing effects.</summary>
@@ -502,6 +557,7 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
         var previous = monster.Target;
         if (ReferenceEquals(previous, target)) return;
         monster.Target = target;
+        ReleaseSurroundSlot(monster);
         foreach (var handler in TargetChanged) _loop.TrackRuntimeDetached("monster target change", () => handler(monster, previous, target));
     }
 
@@ -585,32 +641,41 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
         }
         float dist = Distance(m, target);
         if (m.Template.Skills != null && !m.SpecialsOwnedByMvp && TryBossSkill(m, target, null, dist, now)) return;
-        float reach = m.Template.AttackRange + 0.5f;
-        if (dist <= reach)
+        bool inReach = dist <= m.Template.AttackRange + 0.5f;
+        // AIConfig _iIsSurround: walk to a slot around the target instead, between swings (MonsterService.Surround).
+        if (!(inReach && SwingHolds(m, now)) && SurroundSlot(m, target) is { } slot
+            && WalksToSlot(m, map, slot, inReach, now)) return;
+        if (inReach)
         {
-            if (m.Moving)
-            {
-                m.Moving = false;
-                SendStop(m, now);
-            }
-            if (now >= m.NextSwingMs && Attack != null)
-            {
-                m.NextSwingMs = now + m.Template.SwingIntervalMs;
-                m.ChaseActiveMs = now;
-                m.Face = Angle(m.X, m.Z, target.Position.X, target.Position.Z);
-                _loop.TrackRuntimeDetached("monster attack", () => Attack(m, target));
-            }
+            Swing(m, target, now);
             return;
         }
         if (m.Template.SpeedCm <= 0) return;
         // Chase: re-path toward the target every 400 ms or when the segment ended.
         if (!m.Moving || now >= m.NextChaseMs)
         {
-            m.NextChaseMs = now + 400;
+            m.NextChaseMs = now + ChaseRepathMs;
             float dx = target.Position.X - m.X, dz = target.Position.Z - m.Z;
             float len = MathF.Sqrt(dx * dx + dz * dz);
-            float go = Math.Min(MaxSegment, len - m.Template.AttackRange * 0.8f);
-            if (go > 0.2f) ChaseStep(m, map, target.Position.X, target.Position.Z, m.X + dx / len * go, m.Z + dz / len * go);
+            float go = Math.Min(MaxSegment, len - m.Template.AttackRange * ApproachShare);
+            if (go > MinChaseStep) ChaseStep(m, map, target.Position.X, target.Position.Z, m.X + dx / len * go, m.Z + dz / len * go);
+        }
+    }
+
+    /// <summary>In reach of its player: stand and swing when the swing interval allows.</summary>
+    private void Swing(MonsterUnit m, GameSession target, long now)
+    {
+        if (m.Moving)
+        {
+            m.Moving = false;
+            SendStop(m, now);
+        }
+        if (now >= m.NextSwingMs && Attack != null)
+        {
+            m.NextSwingMs = now + m.Template.SwingIntervalMs;
+            m.ChaseActiveMs = now;
+            m.Face = Angle(m.X, m.Z, target.Position.X, target.Position.Z);
+            _loop.TrackRuntimeDetached("monster attack", () => Attack(m, target));
         }
     }
 
@@ -668,8 +733,12 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
             long Scale(long v) => (long)Math.Round(v * k);
             m.Template = b with
             {
-                Level = b.Level + m.LevelsGained, MaxHp = Math.Max(1, Scale(b.MaxHp)), Atk = Scale(b.Atk), Matk = Scale(b.Matk),
-                Def = Scale(b.Def), Mdef = Scale(b.Mdef),
+                Level = b.Level + m.LevelsGained,
+                MaxHp = Math.Max(1, Scale(b.MaxHp)),
+                Atk = Scale(b.Atk),
+                Matk = Scale(b.Matk),
+                Def = Scale(b.Def),
+                Mdef = Scale(b.Mdef),
             };
             double progress = cap > 0 ? pct / cap : 0;
             m.ExpBonusPct = progress * ai.KillExpMaxPct;

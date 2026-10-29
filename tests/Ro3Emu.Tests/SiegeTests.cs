@@ -14,7 +14,7 @@ using Ro3Emu.Server.Maps;
 
 namespace Ro3Emu.Tests;
 
-public sealed class SiegeTests : IAsyncLifetime
+public sealed partial class SiegeTests : IAsyncLifetime
 {
     private readonly string _dataDir = Path.Combine(Path.GetTempPath(), "ro3emu-siege-" + Guid.NewGuid().ToString("N"));
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(12);
@@ -142,10 +142,10 @@ public sealed class SiegeTests : IAsyncLifetime
         Assert.Equal(_nextSiege.Start, closed.SiegeBaseInfo.BattleInfos[1001].StartTime);
         await bot.SendGameAsync(TerritoryWarsService.SiegeHistoryQuery, new SiegeCityHistoryInfoReq { CityIds = { 1001 } });
         Assert.Equal(ErrorCodes.DataNotFound, (await Next(bot, TerritoryWarsService.SiegeHistoryQuery, SiegeCityHistoryInfoResp.Parser)).Result);
-        await bot.SendGameAsync(TerritoryWarsService.SiegeToolList, new GetGuildWartimeToolBelongListReq());
-        Assert.Equal(ErrorCodes.TerritoryGuild, (await Next(bot, TerritoryWarsService.SiegeToolList, GetGuildWartimeToolBelongListRsp.Parser)).Result);
-        await bot.SendGameAsync(TerritoryWarsService.SiegeToolBuild, new GuildAttackCityBuildReq());
-        Assert.Equal(ErrorCodes.FeatureUnavailable, (await Next(bot, TerritoryWarsService.SiegeToolBuild, GuildAttackCityBuildResp.Parser)).Result);
+        await bot.SendGameAsync(GuildService.ToolList, new GetGuildWartimeToolBelongListReq());
+        Assert.Equal(ErrorCodes.TerritoryGuild, (await Next(bot, GuildService.ToolList, GetGuildWartimeToolBelongListRsp.Parser)).Result);
+        await bot.SendGameAsync(GuildService.BuildCannon, new GuildAttackCityBuildReq());
+        Assert.Equal(ErrorCodes.TerritoryGuild, (await Next(bot, GuildService.BuildCannon, GuildAttackCityBuildResp.Parser)).Result);
         await bot.SendGameAsync(TerritoryWarsService.SiegeBaseQuery, new GetSiegeBaseInfoReq { PlayerId = Session(bot).Role!.Id + 1 });
         Assert.Equal(ErrorCodes.NoPermission, (await Next(bot, TerritoryWarsService.SiegeBaseQuery, GetSiegeBaseInfoRsp.Parser,
             r => r.Result != 0)).Result);

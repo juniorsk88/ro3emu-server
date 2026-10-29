@@ -139,9 +139,13 @@ public sealed class VideoRigTests
     {
         var jobs = family switch
         {
-            "mage" => new[] { 1000, 2100, 2200, 2210, 2300, 2400 }, "swordsman" => [1000, 1100, 1200, 1210, 1300, 1310, 1400, 1410],
-            "archer" => [1000, 3100, 3200, 3210, 3211, 3300, 3400], "acolyte" => [1000, 4100, 4200, 4210, 4300, 4400],
-            "thief" => [1000, 5100, 5200, 5210, 5300, 5400], "merchant" => [1000, 6100, 6200, 6300, 6400], _ => throw new ArgumentException(family),
+            "mage" => new[] { 1000, 2100, 2200, 2210, 2300, 2400 },
+            "swordsman" => [1000, 1100, 1200, 1210, 1300, 1310, 1400, 1410],
+            "archer" => [1000, 3100, 3200, 3210, 3211, 3300, 3400],
+            "acolyte" => [1000, 4100, 4200, 4210, 4300, 4400],
+            "thief" => [1000, 5100, 5200, 5210, 5300, 5400],
+            "merchant" => [1000, 6100, 6200, 6300, 6400],
+            _ => throw new ArgumentException(family),
         };
         var rows = data.Table("SkillConfig").Values
             .Where(r => jobs.Contains((int)GameData.Int(r, "_iJob")) && GameData.Int(r, "_iMode") == 0 && GameData.Int(r, "_iBasicType") == 1 && GameData.Int(r, "_iExtraType") == 0)
@@ -152,9 +156,12 @@ public sealed class VideoRigTests
         foreach (var row in rows)
         {
             string file = await RecordAsync((int)GameData.Int(row, "_iID"));
-            if (file != "") manifest.Add(new { skill = GameData.Int(row, "_iID"), group = GameData.Int(row, "_iSkillID"), level = GameData.Int(row, "_iLevel"),
+            if (file != "") manifest.Add(new
+            {
+                skill = GameData.Int(row, "_iID"), group = GameData.Int(row, "_iSkillID"), level = GameData.Int(row, "_iLevel"),
                 job = GameData.Int(row, "_iJob"), name = data.TextOf(row, "_iName"), script = row.GetProperty("_kScriptLogic").GetString(),
-                file = Path.GetRelativePath(Videos, file).Replace('\\', '/') });
+                file = Path.GetRelativePath(Videos, file).Replace('\\', '/')
+            });
         }
         Directory.CreateDirectory(Path.Combine(Videos, family));
         File.WriteAllText(Path.Combine(Videos, family, "manifest.json"), JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false));
@@ -201,8 +208,16 @@ public sealed class VideoRigTests
         return 0;
     }
 
-    private static string FamilyOf(int job) => job switch { >= 2000 and < 3000 => "mage", >= 1000 and < 2000 => "swordsman", >= 3000 and < 4000 => "archer",
-        >= 4000 and < 5000 => "acolyte", >= 5000 and < 6000 => "thief", >= 6000 and < 7000 => "merchant", _ => "common" };
+    private static string FamilyOf(int job) => job switch
+    {
+        >= 2000 and < 3000 => "mage",
+        >= 1000 and < 2000 => "swordsman",
+        >= 3000 and < 4000 => "archer",
+        >= 4000 and < 5000 => "acolyte",
+        >= 5000 and < 6000 => "thief",
+        >= 6000 and < 7000 => "merchant",
+        _ => "common"
+    };
 
     private static Process StartFfmpeg(string file, int seconds)
     {

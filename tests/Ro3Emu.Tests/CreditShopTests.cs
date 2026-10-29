@@ -109,7 +109,7 @@ public sealed class CreditShopTests : IAsyncLifetime
     private void ApproveLikeThePanel(string orderId, string account, double price)
     {
         using var db = Open();
-        double balance = Convert.ToDouble(Scalar(db, "SELECT amount FROM panel_credit WHERE account = $a", ("$a", account)))  - price;
+        double balance = Convert.ToDouble(Scalar(db, "SELECT amount FROM panel_credit WHERE account = $a", ("$a", account))) - price;
         Exec(db, "UPDATE panel_credit SET amount = $b WHERE account = $a", ("$b", balance), ("$a", account));
         Exec(db, "INSERT INTO panel_ledger(kind, account, product, credits, balance_after, status, actor, created) VALUES ('purchase', $a, 'x', $p, $b, 'aguardando entrega', 'site', 'now')",
             ("$a", account), ("$p", price), ("$b", balance));

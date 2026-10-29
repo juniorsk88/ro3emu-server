@@ -100,22 +100,22 @@ internal static class OriginGuardPatch
     {
         int opened = 0;
         foreach (var type in module.GetTypes())
-        foreach (var method in type.Methods)
-        {
-            if (!method.HasBody) continue;
-            foreach (var instruction in method.Body.Instructions)
+            foreach (var method in type.Methods)
             {
-                switch (instruction.Operand)
+                if (!method.HasBody) continue;
+                foreach (var instruction in method.Body.Instructions)
                 {
-                    case MethodReference mr when Own(mr.DeclaringType, module) && mr.Resolve() is { IsPrivate: true } target && !Reaches(type, target.DeclaringType):
-                        target.IsPrivate = false; target.IsAssembly = true; opened++;
-                        break;
-                    case FieldReference fr when Own(fr.DeclaringType, module) && fr.Resolve() is { IsPrivate: true } field && !Reaches(type, field.DeclaringType):
-                        field.IsPrivate = false; field.IsAssembly = true; opened++;
-                        break;
+                    switch (instruction.Operand)
+                    {
+                        case MethodReference mr when Own(mr.DeclaringType, module) && mr.Resolve() is { IsPrivate: true } target && !Reaches(type, target.DeclaringType):
+                            target.IsPrivate = false; target.IsAssembly = true; opened++;
+                            break;
+                        case FieldReference fr when Own(fr.DeclaringType, module) && fr.Resolve() is { IsPrivate: true } field && !Reaches(type, field.DeclaringType):
+                            field.IsPrivate = false; field.IsAssembly = true; opened++;
+                            break;
+                    }
                 }
             }
-        }
         return opened;
     }
 

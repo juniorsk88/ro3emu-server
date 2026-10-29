@@ -11,6 +11,7 @@ public class ReleaseLimitTests : IDisposable
     {
         Environment.SetEnvironmentVariable(ReleaseLimit.EnvironmentVariable, null);
         Directory.Delete(_dir, true);
+        GC.SuppressFinalize(this);
     }
 
     [Theory]

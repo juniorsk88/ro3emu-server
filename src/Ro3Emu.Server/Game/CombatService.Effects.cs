@@ -50,6 +50,11 @@ public sealed partial class CombatService
             await handler(s, row);
             if (!CurrentCastMap(s, action)) return;
         }
+        if (OwnSkillLanded != null && OwnSkillAdmit?.Invoke(s, action.Request.SkillId) != null)
+        {
+            await OwnSkillLanded(s, row);
+            return;
+        }
         if (Script(row) == "Resurrection")
         {
             var target = FindPlayer(s, action.Request.TargetId, dead: true);
@@ -93,7 +98,7 @@ public sealed partial class CombatService
             await Task.Delay(flight);
             if (!CurrentCastMap(s, action)) return;
         }
-        await ApplyEffectsAsync(s, action, action.Request.TargetPos ?? action.Origin);
+        await ApplyEffectsAsync(s, action, action.Request.TargetPos ?? action.Origin, projectileHandled: true);
     }
 
     private List<MonsterUnit> SelectEnemies(GameSession s, ActiveSkillCast action, Vec3 center, float? radiusOverride = null)
@@ -117,7 +122,7 @@ public sealed partial class CombatService
     }
 
     private async Task ApplyEffectsAsync(GameSession s, ActiveSkillCast action, Vec3 center, SkillObject? field = null,
-        IReadOnlyList<MonsterUnit>? chosenTargets = null, IReadOnlyList<GameSession>? chosenAllies = null)
+        IReadOnlyList<MonsterUnit>? chosenTargets = null, IReadOnlyList<GameSession>? chosenAllies = null, bool projectileHandled = false)
     {
         if (s.Dead || s.Role?.Id != action.OwnerId || s.WorldScene != action.WorldScene || s.SceneLoading
             || s.SceneGeneration != action.SceneGeneration || field?.Removing == true
@@ -150,7 +155,7 @@ public sealed partial class CombatService
             targets.RemoveAll(m => !selected.Contains(m.Uid));
             await HitEventPlayersAsync(s, playerTargets.Where(p => selected.Contains(p.Role!.Id)).ToArray(),
                 row, action.Request.SkillId, VisualOf(row).HitEffect, action.Id, CanApplyMoreEffects,
-                action.GuardianDamage == null ? null : (id, amount) => RecordGuardianDamage(action, id, amount), center);
+                action.GuardianDamage == null ? null : (id, amount) => RecordGuardianDamage(action, id, amount), center, sendBullets: !projectileHandled);
             if (IsGuardianEffect(row))
                 await GuardianPlayerDebuffsAsync(s, row, playerTargets.Where(p => selected.Contains(p.Role!.Id)),
                     alreadySlowed, castingRole.Id, CanApplyMoreEffects);
@@ -300,7 +305,9 @@ public sealed partial class CombatService
                 }
                 if (CurrentCaster() && hit.Dsts.Any(d => d.HitResult != DamageHitResult.Miss)) await _buffs.RecoverEnergyOnHitAsync(s, row);
                 var sourceViewers = CurrentCaster() ? _world.Viewers(s).Append(s) : Enumerable.Empty<GameSession>();
-                foreach (var viewer in processed.SelectMany(t => t.Viewers).Concat(sourceViewers).Distinct()) await viewer.SendGameAsync(SkillHit, hit);
+                var hitViewers = processed.SelectMany(t => t.Viewers).Concat(sourceViewers).Distinct().ToArray();
+                if (!projectileHandled) await SendHitBulletsAsync(hitViewers, row, hit, castingRole.Id);
+                foreach (var viewer in hitViewers) await viewer.SendGameAsync(SkillHit, hit);
                 if (CurrentCaster() && field?.Trap == true)
                     await ToPlayerAndViewersAsync(s, TrapDamage, new TrapDamageNtf { SkillConfigId = action.Request.SkillId, DamageValue = hit.Dsts.Sum(d => d.Damage), Pos = center.Clone() });
             }

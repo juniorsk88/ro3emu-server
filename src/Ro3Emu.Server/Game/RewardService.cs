@@ -59,6 +59,8 @@ public sealed class RewardService
         /// <summary>Base EXP before the level-gap correction and the party bonus: what each sharing party member scales for their own level.</summary>
         internal long RawExp;
         internal bool Published;
+        /// <summary>The bag items the committed kill created (auto-decomposed ones are gone).</summary>
+        internal List<InvItem> Granted = [];
     }
     private readonly System.Runtime.CompilerServices.ConditionalWeakTable<MonsterUnit, KillOutcome> _outcomes = new();
     internal Func<GameSession, MonsterUnit, (List<(int Entry, int Count)> Items, long BaseExp, long JobExp)>? ResolveKillForTest { get; set; }
@@ -108,9 +110,9 @@ public sealed class RewardService
             StageAfkKill?.Invoke(player, monster, settlement, outcome.Items, outcome.BaseExp, outcome.JobExp);
             StageHuntKill?.Invoke(player, monster, settlement);
             settlement.LibraryMonster = monster.Template.NpcId;
-            await _character.ExchangeLockedAsync(player, [], outcome.Items, popup: false, sync: outcome.Items.Count > 0,
-                baseExp: outcome.BaseExp, jobExp: outcome.JobExp, rewardSettlement: settlement,
-                persist: settlement.Enlist, committed: settlement.Applied);
+            outcome.Granted = await _character.ExchangeLockedAsync(player, [], outcome.Items, popup: false,
+                sync: outcome.Items.Count > 0, baseExp: outcome.BaseExp, jobExp: outcome.JobExp, rewardSettlement: settlement,
+                persist: settlement.Enlist, committed: settlement.Applied) ?? [];
         }
         catch
         {
@@ -210,12 +212,9 @@ public sealed class RewardService
                     Position = monster.Pos, TargetEntry = monster.Template.NpcId,
                     TargetUid = role.Id, RewardType = { RewardDrop }
                 };
+                var unshown = new List<InvItem>(outcome.Granted);
                 foreach (var (entry, count) in outcome.Items)
-                    notify.Rewards.Add(new ItemBaseInfo
-                    {
-                        ItemEntry = entry, Stack = count,
-                        ItemInfos = { [10001] = new ItemAttrValue { LongVal = 0 } }
-                    });
+                    notify.Rewards.AddRange(DropInfos(unshown, entry, count));
                 await player.SendGameAsync(CharacterService.GetRewardNotify, notify);
             }
         }
@@ -258,6 +257,29 @@ public sealed class RewardService
                 _log.LogWarning(e, "Shared kill EXP for {Name} from {Npc} failed", role?.Name, monster.Template.NpcId);
             }
         }
+    }
+
+    /// <summary>
+    /// The 31322 drop notice's entries for one looted row. The client keeps these infos for the pickup float and passes them to
+    /// FastUseManager.AddFastUse (LC_DroppedItemManager -> LC_TipHelper.PopRewardTip, ManifestTypeFloat), whose
+    /// LC_EquipmentHelper.CanFastEquip offers to wear a piece only when its kEquipInfo is appraised, it has an
+    /// instance id and its iScore beats the worn one. So each piece of equipment that reached the bag is described as
+    /// the bag item itself; anything else stays entry and count. (inferred) the original's drop notice carries the same.
+    /// </summary>
+    private IEnumerable<ItemBaseInfo> DropInfos(List<InvItem> unshown, int entry, int count)
+    {
+        for (int index; count > 0 && (index = unshown.FindIndex(item => item.Entry == entry)) >= 0; count--)
+        {
+            var piece = unshown[index];
+            unshown.RemoveAt(index);
+            if (_character.EquipmentInfo(piece) is not { } info) break;
+            yield return info;
+        }
+        if (count > 0)
+            yield return new ItemBaseInfo
+            {
+                ItemEntry = entry, Stack = count, ItemInfos = { [10001] = new ItemAttrValue { LongVal = 0 } }
+            };
     }
 
     /// <summary>MultiverseGroupConfig id → the playbook's value, else _iValue_default (playbook 0 here).</summary>

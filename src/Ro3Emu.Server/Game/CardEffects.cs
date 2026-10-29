@@ -64,7 +64,7 @@ public sealed class CardEffects
 
     /// <summary>Armor element cards (buff group -> EleConfig element): Earth 3, Water 5, Wind 2, Poison 6, Fire 4, Ghost 9, Holy 7.</summary>
     private static readonly Dictionary<long, int> ArmorElements = new()
-        { [20090] = 3, [20100] = 5, [20110] = 2, [20120] = 6, [20130] = 4, [20140] = 9, [20515] = 7 };
+    { [20090] = 3, [20100] = 5, [20110] = 2, [20120] = 6, [20130] = 4, [20140] = 9, [20515] = 7 };
 
     /// <summary>"Damage against all Orcs / Kobolds / Kara Crabs / Shellfish / Aster / Goblins +X%": group -> does this monster's name belong. (inferred)
     /// The data has no family field (NPCConfig._iRace is the race class), so the family is read from the monster's name.</summary>
@@ -302,14 +302,14 @@ public sealed class CardEffects
             else if (group == NextHitAfterCrit && result == DamageHitResult.Critical && logic.Length >= 2 && Description(passive.Row) is { Length: >= 1 } crit)
                 lock (state) { state.NextHitUntil = now + logic[1]; state.NextHitBp = (long)(crit[0] * 100); }
             else if (RaceGroups.TryGetValue(group switch
-                     {
-                         >= 20150 and <= 20153 => 20150,
-                         >= 20220 and <= 20223 => 20220,
-                         >= 20270 and <= 20273 => 20270,
-                         >= 20280 and <= 20283 => 20280,
-                         >= 20290 and <= 20293 => 20290,
-                         _ => group,
-                     }, out var belongs) && logic.Length >= 1 && belongs(name ??= MonsterName(target.Template.NpcId))) bonus += logic[0];
+            {
+                >= 20150 and <= 20153 => 20150,
+                >= 20220 and <= 20223 => 20220,
+                >= 20270 and <= 20273 => 20270,
+                >= 20280 and <= 20283 => 20280,
+                >= 20290 and <= 20293 => 20290,
+                _ => group,
+            }, out var belongs) && logic.Length >= 1 && belongs(name ??= MonsterName(target.Template.NpcId))) bonus += logic[0];
         }
         return bonus <= 0 ? damage : damage + (long)Math.Floor(damage * bonus / 10000d);
     }

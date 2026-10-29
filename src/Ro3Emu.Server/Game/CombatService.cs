@@ -235,7 +235,12 @@ public sealed partial class CombatService : IGameTicker
     public List<Func<GameSession, GameSession, Task>> PlayerKilled { get; } = new();
     public Func<GameSession, GameSession, bool>? PlayerHostile { get; set; }
     public Func<GameSession, MonsterUnit, bool>? MonsterTargetAllowed { get; set; }
-    public Func<GameSession, MonsterUnit, Vec3, Vec3, bool>? BlockedMonsterEndpointAllowed { get; set; }
+    /// <summary>
+    /// Whether something stands between the caster and the target of a skill that walls stop (_iPassBlock 2): the
+    /// monster aimed at (null for a ground or player target), the caster's and the target's positions. Unset, nothing
+    /// does (see <see cref="ValidateTarget"/>).
+    /// </summary>
+    public Func<GameSession, MonsterUnit?, Vec3, Vec3, bool>? SkillLineBlocked { get; set; }
 
     /// <summary>A monster damaged a player; the flag says the hit was lethal (MVP statistics).</summary>
     public List<Action<MonsterUnit, GameSession, long, bool>> Taken { get; } = new();
@@ -274,6 +279,20 @@ public sealed partial class CombatService : IGameTicker
     public List<Func<GameSession, Task>> PlayerRevived { get; } = new();
     /// <summary>A match owner decides which skills a participant may cast (true/false), or defers (null).</summary>
     public Func<GameSession, int, bool?>? MatchSkillRule { get; set; }
+    /// <summary>
+    /// A skill a feature owns outright (the war commander's): null for any other skill, else 0 to cast it or the refusal.
+    /// Such a cast skips the job-tree check and the SkillConfig cooldowns; <see cref="OwnSkillCast"/> runs in their place
+    /// once the cast is accepted, and <see cref="OwnSkillLanded"/> resolves it instead of the generic effects.
+    /// </summary>
+    public Func<GameSession, int, int?>? OwnSkillAdmit { get; set; }
+    public Func<GameSession, int, Task>? OwnSkillCast { get; set; }
+    public Func<GameSession, JsonElement, Task>? OwnSkillLanded { get; set; }
+
+    /// <summary>
+    /// Skills a player may cast without learning them, resolved like any other (a war vehicle seat's skills,
+    /// VehicleSeatConfig _kMainSkills / _kSkills); their cooldowns are the ordinary SkillConfig ones.
+    /// </summary>
+    public List<Func<GameSession, int, bool>> GrantedSkill { get; } = [];
     /// <summary>World-core owns the dead player's explicit accept/decline invitation.</summary>
     public Func<GameSession, GameSession, JsonElement, Task>? ReviveOffer { get; set; }
     public Func<GameSession, int>? ReviveCheck { get; set; }
@@ -321,6 +340,7 @@ public sealed partial class CombatService : IGameTicker
         DamageAdjusters.Add(PlayerBonusDamage);
         WireBuffRules();
         WireBossSkills();
+        WireCompanions();
     }
 
     private static long Now => MonsterService.NowMs;
@@ -656,8 +676,7 @@ public sealed partial class CombatService : IGameTicker
     private (long Damage, DamageHitResult Result) Damage(Fighter a, Fighter b, JsonElement skill, int branch = 0,
         double bonusCrit = 0, bool forceCrit = false)
     {
-        // A skill that never misses (_iSkillHit 10000) draws no hit roll, as before.
-        if (GameData.Int(skill, "_iSkillHit") < 10000 && Rolls.Hit() >= HitRate(a, b, skill)) return (0, DamageHitResult.Miss);
+        if (!NeverMisses(skill) && Rolls.Hit() >= HitRate(a, b, skill)) return (0, DamageHitResult.Miss);
         double dmg = BaseDamage(a, b, skill, branch, out bool magic);
         dmg *= 0.97 + Rolls.DamageFloat() * 0.06; // DamageFloat [9700, 10300]
         var result = DamageHitResult.Normal;
@@ -671,8 +690,16 @@ public sealed partial class CombatService : IGameTicker
     }
 
     // Hit: dodge = FLEE/(FLEE + ParHit 600), attacker HIT adds back; HitRateRange [0.3, 1]; _iSkillHit 10000 never misses.
-    private static double HitRate(Fighter a, Fighter b, JsonElement skill) => GameData.Int(skill, "_iSkillHit") >= 10000 ? 1
+    private static double HitRate(Fighter a, Fighter b, JsonElement skill) => NeverMisses(skill) ? 1
         : Math.Clamp(1 - b.Flee / (double)(b.Flee + 600) + a.Hit / (double)(a.Hit + 600) * 0.5, 0.3, 1.0);
+
+    /// <summary>
+    /// _iSkillHit 10000 never misses (inferred). The data sets it per row: nearly every damaging skill, physical and
+    /// magic, and 444 monster normal attacks carry 10000; the players' normal attacks and 55 monster ones (MVP swings,
+    /// GvG and Pet Tower monsters) carry 0 and roll against FLEE. So FLEE dodges players and those monsters, not the
+    /// rest, as the data was set up (#bug-reports "163 FLEE, every attack hits" is that rule, not a bug).
+    /// </summary>
+    internal static bool NeverMisses(JsonElement skill) => new Data.Config.SkillConfig(skill).SkillHit >= 10000;
 
     /// <summary>The critical chance of a hit (magic skills too: _iSkillCri is 10000 on most of them and the client's CRIT tooltip names damage and healing skills).</summary>
     private static double CritRate(Fighter a, Fighter b, JsonElement skill)
@@ -682,6 +709,7 @@ public sealed partial class CombatService : IGameTicker
         if (skillCri > 0) chance += (a.CritBonus - b.CritReduce) / 10000.0;
         return Math.Clamp(chance, 0, 1);
     }
+
 
     /// <summary>The roll-free part of a hit: skill ratio and flat, defense and element.</summary>
     private double BaseDamage(Fighter a, Fighter b, JsonElement skill, int branch, out bool magic)
@@ -732,7 +760,7 @@ public sealed partial class CombatService : IGameTicker
     {
         var stats = _character.Stats(p);
         var playerSkill = _data.Row("SkillConfig", _skills.NormalAttack(p.Progress!.Career))!.Value;
-        var player = new Fighter(stats[103], stats[104], stats[109], stats[111], p.Progress.Level, 1) { EleIgnore = stats[235], PenDef = stats[217], PenDefPct = stats[218], PenMdef = stats[219], PenMdefPct = stats[220] };
+        var player = new Fighter(stats[103], stats[104], stats[109], stats[111], p.Progress.Level, AttackElement(p, playerSkill)) { EleIgnore = stats[235], PenDef = stats[217], PenDefPct = stats[218], PenMdef = stats[219], PenMdefPct = stats[220] };
         var asTarget = new Fighter(0, 0, m.Flee, 0, m.Level, m.Element) { Def = m.Def, Mdef = m.Mdef, Flee = m.Flee };
         double playerDps = ExpectedDamage(player, asTarget, playerSkill) * 1000.0 / Math.Max(1, SkillMs(p, playerSkill));
         var monster = new Fighter(m.Atk, m.Matk, m.Hit, m.Cri, m.Level, m.Element);

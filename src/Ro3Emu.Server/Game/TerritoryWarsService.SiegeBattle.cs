@@ -49,6 +49,7 @@ public sealed partial class TerritoryWarsService
             : owner.state.Epoch == Epoch && owner.state.SiegeRuns.TryGetValue(Key, out var current) ? current
               : throw new InvalidOperationException("Territory siege has no active or retiring epoch state.");
         public MonsterUnit? Crystal { get; set; }
+        internal CommandBoard Command { get; } = new();
         public bool Spawning { get; set; }
     }
 
@@ -160,6 +161,7 @@ public sealed partial class TerritoryWarsService
         var p = battle.State.Players[s.Role!.Id];
         p.Loaded = true; await SaveAsync(state);
         await Send(s, 30401, SiegeBaseInfo(battle));
+        await SendCommandBoardAsync(s);
         // DungeonLua_2230101: point 73 defender, point 75 attacker.
         int born = p.Guild == battle.State.Defense ? 73 : 75;
         if (_maps.Map(SiegeScene)?.Points.GetValueOrDefault(born) is { } point)
@@ -204,7 +206,21 @@ public sealed partial class TerritoryWarsService
         && SiegeMember(b, battle) && OwnId(a) != OwnId(b);
 
     private bool SiegeCanHit(GameSession s, MonsterUnit m, SiegeRun battle)
-        => m != battle.Crystal || SiegeActive(battle) && SiegeMember(s, battle) && OwnId(s) == battle.State.Attack;
+        => MachineCamp(m) is { } camp ? MachineHittable(s, battle, camp)
+            : m != battle.Crystal || SiegeActive(battle) && SiegeMember(s, battle) && OwnId(s) == battle.State.Attack;
+
+    /// <summary>
+    /// CombatService.SkillLineBlocked: (inferred) inside a siege room the castle stops skills along the navigation grid,
+    /// standing in for the siege's air walls (sc_gvg_gongchengzhan_001 m_kAirWalls, gridLevel 1-5), which the original
+    /// switches on through dungeon variable 133 CAirWallList from scripts the client does not have. Elsewhere nothing
+    /// stops a skill, as in the client.
+    /// </summary>
+    private bool SiegeSkillLineBlocked(GameSession s, MonsterUnit? m, Vec3 origin, Vec3 target)
+    {
+        if (s.SiegeBattle is null || s.SceneEntry != SiegeScene || _maps.Map(SiegeScene)?.Nav is not { } nav
+            || nav.CanWalk(origin.X, origin.Y, origin.Z, target.X, target.Z)) return false;
+        return m == null || !SiegeCrystalBlockedEndpointAllowed(s, m, origin, target);
+    }
 
     /// <summary>The configured crystal sits in a blocked navigation footprint at point 44. Preserve
     /// straight-line path checks up to its target cell, and allow only that terminal cell to be blocked
