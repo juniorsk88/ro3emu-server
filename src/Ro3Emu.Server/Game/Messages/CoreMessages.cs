@@ -57,33 +57,48 @@ public sealed class CoreMessages(Microsoft.Extensions.Options.IOptions<ServerOpt
             var order = CreateOrderReq.Parser.ParseFrom(body.Span);
             // Credits of the web shop pay for it when ServerOptions.CreditShop is on (CreditShop): a pending order, approved on the shop
             // page the PC client opens (transaction_url); CreditShopDelivery then gives the goods. Otherwise fall through to the shop link.
-            var bought = await creditShop.RequestAsync(session, order.ChargeType, order.ChargeId);            switch (bought.Outcome)
+            var bought = await creditShop.RequestAsync(session, order.ChargeType, order.ChargeId); switch (bought.Outcome)
             {
                 case CreditShop.Outcome.Pending:
-                    await session.SendGameAsync(2001, new CreateOrderResp { Result = 0, ChargeId = order.ChargeId, ChargeType = order.ChargeType,
+                    await session.SendGameAsync(2001, new CreateOrderResp
+                    {
+                        Result = 0, ChargeId = order.ChargeId, ChargeType = order.ChargeType,
                         OrderId = "credits-" + bought.OrderId,
-                        OrderData = System.Text.Json.JsonSerializer.Serialize(new { data = new { transaction_url = creditShop.ApprovalUrl(bought.OrderId) } }) });
+                        OrderData = System.Text.Json.JsonSerializer.Serialize(new { data = new { transaction_url = creditShop.ApprovalUrl(bought.OrderId) } })
+                    });
                     await GmCommands.ReplyAsync(session, bought.Message);
                     return;
                 case CreditShop.Outcome.Insufficient:
-                    await session.SendGameAsync(2001, new CreateOrderResp { Result = ErrorCodes.CurrencyShort, ErrMsg = bought.Message,
-                        ChargeId = order.ChargeId, ChargeType = order.ChargeType });
+                    await session.SendGameAsync(2001, new CreateOrderResp
+                    {
+                        Result = ErrorCodes.CurrencyShort, ErrMsg = bought.Message,
+                        ChargeId = order.ChargeId, ChargeType = order.ChargeType
+                    });
                     return;
                 case CreditShop.Outcome.Failed:
-                    await session.SendGameAsync(2001, new CreateOrderResp { Result = ErrorCodes.FeatureUnavailable, ErrMsg = bought.Message,
-                        ChargeId = order.ChargeId, ChargeType = order.ChargeType });
+                    await session.SendGameAsync(2001, new CreateOrderResp
+                    {
+                        Result = ErrorCodes.FeatureUnavailable, ErrMsg = bought.Message,
+                        ChargeId = order.ChargeId, ChargeType = order.ChargeType
+                    });
                     return;
             }
             if (StoreLink(order.ChargeType) is not { } url)
             {
-                await session.SendGameAsync(2001, new CreateOrderResp { Result = ErrorCodes.FeatureUnavailable,
-                    ChargeId = order.ChargeId, ChargeType = order.ChargeType });
+                await session.SendGameAsync(2001, new CreateOrderResp
+                {
+                    Result = ErrorCodes.FeatureUnavailable,
+                    ChargeId = order.ChargeId, ChargeType = order.ChargeType
+                });
                 return;
             }
             // The PC client reads orderData as JSON and opens data.transaction_url in the browser; no payment is started.
-            await session.SendGameAsync(2001, new CreateOrderResp { Result = 0, ChargeId = order.ChargeId, ChargeType = order.ChargeType,
+            await session.SendGameAsync(2001, new CreateOrderResp
+            {
+                Result = 0, ChargeId = order.ChargeId, ChargeType = order.ChargeType,
                 OrderId = "shop-" + Guid.NewGuid().ToString("N"),
-                OrderData = System.Text.Json.JsonSerializer.Serialize(new { data = new { transaction_url = url } }) });
+                OrderData = System.Text.Json.JsonSerializer.Serialize(new { data = new { transaction_url = url } })
+            });
         });
         routes.Map(2002, "handler", async (session, msgId, body) =>
         {

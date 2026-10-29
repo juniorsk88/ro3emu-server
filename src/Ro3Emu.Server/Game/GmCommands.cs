@@ -214,7 +214,8 @@ public sealed class GmCommands(IOptions<ServerOptions> options, GameData data, S
             await ReplyAsync(s, $"Dungeon solo TEST AID {(s.DungeonSoloMatch ? "ON" : "OFF")} for this role session. "
                 + "Click Enter Challenge again. This is not original matchmaking behavior. "
                 + "With the server switch Ro3Emu:DungeonSolo on, a lone role may enter either way.");
-        }),
+        }
+        ),
         ["dungeon"] = ("<sceneEntry> (test aid: the client's 30400 Enter for a solo story dungeon)", async (s, a) =>
         {
             if (a.Length != 1 || !long.TryParse(a[0], out long scene)) throw new ArgumentException("<sceneEntry>");
@@ -242,20 +243,23 @@ public sealed class GmCommands(IOptions<ServerOptions> options, GameData data, S
             else if (a.Length == 2 && a[0] == "rank" && int.TryParse(a[1], out int rank))
                 await ReplyAsync(s, await battles.SetChickenRankAsync(s, rank));
             else throw new ArgumentException("shape <players> <team> (players a multiple of team, more than one team) | shape reset | skip | rank <n>");
-        }),
+        }
+        ),
         // Server-wide adjustments, in memory until the next restart (the Ro3Emu__CombatLocks / Ro3Emu__PresetSwitchCooldown switches set the start-up value).
         ["combatlock"] = ("on|off (server-wide: lock skills, build switch, stat points and more while fighting; off = nothing locks)", async (s, a) =>
         {
             if (a.Length == 1 && a[0].ToLowerInvariant() is "on" or "off") options.Value.CombatLocks = a[0].Equals("on", StringComparison.OrdinalIgnoreCase);
             else if (a.Length != 0) throw new ArgumentException("on|off");
             await ReplyAsync(s, $"Combat locks are {(options.Value.CombatLocks ? "ON" : "OFF")} (players already marked as fighting leave that state within seconds).");
-        }),
+        }
+        ),
         ["presetcd"] = ("[seconds] (server-wide wait between skill Preset 1-5 switches; 0 = instant, the original game waits 3)", async (s, a) =>
         {
             if (a.Length == 1) options.Value.PresetSwitchCooldown = Math.Clamp(I(a[0]), 0, 60);
             else if (a.Length != 0) throw new ArgumentException("[seconds]");
             await ReplyAsync(s, $"Skill Preset switch wait: {options.Value.PresetSwitchCooldown} s.");
-        }),
+        }
+        ),
         ["online"] = ("", Online),
         ["warp"] = ("<sceneEntry> [x z]", Warp),
         ["jump"] = ("<x> <z>", Jump),

@@ -668,8 +668,12 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
             long Scale(long v) => (long)Math.Round(v * k);
             m.Template = b with
             {
-                Level = b.Level + m.LevelsGained, MaxHp = Math.Max(1, Scale(b.MaxHp)), Atk = Scale(b.Atk), Matk = Scale(b.Matk),
-                Def = Scale(b.Def), Mdef = Scale(b.Mdef),
+                Level = b.Level + m.LevelsGained,
+                MaxHp = Math.Max(1, Scale(b.MaxHp)),
+                Atk = Scale(b.Atk),
+                Matk = Scale(b.Matk),
+                Def = Scale(b.Def),
+                Mdef = Scale(b.Mdef),
             };
             double progress = cap > 0 ? pct / cap : 0;
             m.ExpBonusPct = progress * ai.KillExpMaxPct;

@@ -608,8 +608,12 @@ public sealed partial class DungeonService
             // Ro3Emu:DungeonMissingMemberPercent; not original behaviour).
             if (a.Plan.Multi != null && soloScale.For(a.Room.ActiveMembers.Count(), a.Plan.MinPlayers, a.Plan.MaxPlayers) is { } scale
                 && (waveTemplate ?? _monsters.Template(spawn.NpcId)) is { } scaled)
-                waveTemplate = scaled with { MaxHp = Math.Max(1, scaled.MaxHp * scale.Hp / 100),
-                    Atk = scaled.Atk * scale.Attack / 100, Matk = scaled.Matk * scale.Attack / 100 };
+                waveTemplate = scaled with
+                {
+                    MaxHp = Math.Max(1, scaled.MaxHp * scale.Hp / 100),
+                    Atk = scaled.Atk * scale.Attack / 100,
+                    Matk = scaled.Matk * scale.Attack / 100
+                };
             var monster = await _instances.SpawnAsync(a.Room, spawn.NpcId, spawn.Point, customTemplate: waveTemplate);
             if (a.Settled || a.Room.Closed)
             {
