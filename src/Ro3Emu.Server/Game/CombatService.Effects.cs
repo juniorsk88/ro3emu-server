@@ -675,9 +675,9 @@ public sealed partial class CombatService
     /// <paramref name="go"/> m away, or with a negative value a pull that stops that far in front of the source (31112,
     /// MoveType 2, on the effect's curve). Shared by boss skills and PvP hits.
     /// </summary>
-    private async Task KnockPlayerAsync(GameSession p, float fromX, float fromZ, float go, int skillId, int effectId, int ms)
+    internal async Task KnockPlayerAsync(GameSession p, float fromX, float fromZ, float go, int skillId, int effectId, int ms)
     {
-        if (p.Dead || p.SceneLoading || p.Role is not { } role) return;
+        if (p.Dead || p.SceneLoading || p.Role is not { } role || go > 0 && _buffs.Refuses?.Invoke(p, BuffService.KnockBackGroup) == true) return;
         float dx = p.Position.X - fromX, dz = p.Position.Z - fromZ, length = MathF.Sqrt(dx * dx + dz * dz);
         if (length < 0.001f || go < 0 && length <= -go) return;
         float distance = go >= 0 ? go : -(length + go);

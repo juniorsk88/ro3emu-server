@@ -9,7 +9,7 @@ namespace Ro3Emu.Server.Game;
 /// hit settlement (MVP/event damage, kill rewards to the player) and a SkillHit so the client draws the number.</summary>
 public sealed partial class CombatService
 {
-    /// <summary>A player's skill hit another player (attacker, target, the skill row, damage dealt): card reflects.</summary>
+    /// <summary>A player's skill hit another player (attacker, target, the skill row, damage dealt): card effects and reactions.</summary>
     public List<Func<GameSession, GameSession, JsonElement, long, Task>> PvpHitTaken { get; } = new();
 
     /// <summary>Damage reflected to the attacker by a card. It can take the attacker down to 1 HP but never kill (inferred: the death path is the

@@ -243,7 +243,7 @@ public sealed partial class CombatService
         if (!options.Value.DamageBonusAttributes || amount <= 0) return amount;
         var stats = _character.Stats(s);
         return ApplyDamageBonuses(amount, GameData.Int(row, "_iDmgType") == 2, GameData.Int(row, "_iDistanceType") == 2,
-            GameData.Int(row, "_iIsNormalAtk") == 1, result == DamageHitResult.Critical, id => stats[id], SideOf(target), HitElement(s, row));
+            GameData.Int(row, "_iIsNormalAtk") == 1, result == DamageHitResult.Critical, id => DamageAttribute(s, row, stats, id), SideOf(target), HitElement(s, row));
     }
 
     /// <summary>
@@ -290,7 +290,7 @@ public sealed partial class CombatService
     /// <summary>Also the melee/ranged reductions (228/230 physical, 251/253 magic) and the second "12xx" bucket (1212/1214/1216/1228/1230/1251/1253), capped like the first.</summary>
     internal static long ApplyDamageReductions(long damage, bool magic, bool ranged, bool critical, Func<int, long> attr, HitSide? source = null, int skillElement = 1, bool pvp = false)
     {
-        double cut = Math.Min(9000, (source is { } from ? SideBonus(attr, from, skillElement, true) : 0) + attr(216) + attr(pvp ? 234 : 232) + attr(magic ? 214 : 212) + attr(magic ? (ranged ? 253 : 251) : (ranged ? 230 : 228))) / 10000d;
+        double cut = Math.Min(9000, (source is { } from ? SideBonus(attr, from, skillElement, true) : pvp ? attr(310 + Math.Clamp(skillElement, 1, 10)) : 0) + attr(216) + attr(pvp ? 234 : 232) + attr(magic ? 214 : 212) + attr(magic ? (ranged ? 253 : 251) : (ranged ? 230 : 228))) / 10000d;
         double poolCut = Math.Min(9000, attr(1216) + attr(magic ? 1214 : 1212) + attr(magic ? (ranged ? 1253 : 1251) : (ranged ? 1230 : 1228))) / 10000d;
         double factor = Math.Max(0, 1 - cut) * Math.Max(0, 1 - poolCut);
         if (critical) factor *= Math.Max(0, (15000 - attr(210)) / 15000d);
@@ -306,7 +306,7 @@ public sealed partial class CombatService
 
     internal static long ApplyDamageBonuses(long amount, bool magic, bool ranged, bool normalAttack, bool critical, Func<int, long> attr, HitSide? target = null, int skillElement = 1, bool pvp = false)
     {
-        double bonus = (target is { } to ? SideBonus(attr, to, skillElement, false) : 0) + attr(215) + attr(pvp ? 233 : 231) + (magic ? attr(213) + attr(ranged ? 252 : 250) : attr(211) + attr(ranged ? 229 : 227));
+        double bonus = (target is { } to ? SideBonus(attr, to, skillElement, false) : pvp ? attr(300 + Math.Clamp(skillElement, 1, 10)) : 0) + attr(215) + attr(pvp ? 233 : 231) + (magic ? attr(213) + attr(ranged ? 252 : 250) : attr(211) + attr(ranged ? 229 : 227));
         if (!normalAttack) bonus += attr(225);
         // The "12xx" attributes (1211 = 1000 + 211 ...) are a second, separate bucket: weapons and buffs that say "Damage +X%" use these. (inferred: multiplicative)
         double pool = attr(1215) + (magic ? attr(1213) + attr(ranged ? 1252 : 1250) : attr(1211) + attr(ranged ? 1229 : 1227));

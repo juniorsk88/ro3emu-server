@@ -1,5 +1,7 @@
 # Skill buffs and resources implementation
 
+Socketed card effects use the configured card tier and BuffConfig values. Eddga's Endure rejects Knock-Up and blocks positive knockback; hitstun coverage remains unverified. The Orc, Kobold, Crab, Shellfish and Aster bonuses use each tier's configured value, with family membership inferred from monster names. Normal Goblin Leader and Golden Thief Bug cards use groups 20533 and 20511. Dark Priest's group 20230 reduces the current SP of player targets using the configured chance, cap and cooldown; its trigger chance stacks. Its monster effect remains unavailable in this release. The VIT-based reflect cards cap the additional VIT reflection separately from the base percentage. PvP calculations include damage bonuses and reductions for the hit's skill element.
+
 This note covers `BuffService.cs`, its energy/death partials and `SkillBuffTests.cs`. It distinguishes working server behavior from the client contract and from inferred mechanics. The implementation does not establish original-server parity.
 
 ## Wired runtime behavior

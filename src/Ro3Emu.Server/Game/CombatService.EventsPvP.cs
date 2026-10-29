@@ -156,7 +156,7 @@ public sealed partial class CombatService
         if (!options.Value.DamageBonusAttributes || damage <= 0) return damage;
         bool magic = Ro3Emu.Server.Data.GameData.Int(row, "_iDmgType") == 2, ranged = Ro3Emu.Server.Data.GameData.Int(row, "_iDistanceType") == 2, critical = result == DamageHitResult.Critical;
         int element = HitElement(source, row);
-        damage = ApplyDamageBonuses(damage, magic, ranged, Ro3Emu.Server.Data.GameData.Int(row, "_iIsNormalAtk") == 1, critical, id => attack[id], null, element, pvp: true);
+        damage = ApplyDamageBonuses(damage, magic, ranged, Ro3Emu.Server.Data.GameData.Int(row, "_iIsNormalAtk") == 1, critical, id => DamageAttribute(source, row, attack, id), null, element, pvp: true);
         foreach (var negate in IncomingHitNegators) if (negate(target, magic)) return 0;
         return ApplyDamageReductions(damage, magic, ranged, critical, id => defend[id], null, element, pvp: true);
     }

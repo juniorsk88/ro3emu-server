@@ -234,9 +234,23 @@ public sealed class SkillGrowthTests : IAsyncLifetime
         foreach (var (group, slot) in new[] { (11000, 4), (10000, 5) })
         {
             await alice.SendGameAsync(SkillService.SkillLoad, new SkillLoadReq
-                { OpType = SkillLoadOperation.SkillLoadOpLoad, IsManual = true, SocketNum = slot, Info = new SkillData { SkillId = group, SkillLevel = 1 } });
+            { OpType = SkillLoadOperation.SkillLoadOpLoad, IsManual = true, SocketNum = slot, Info = new SkillData { SkillId = group, SkillLevel = 1 } });
             Assert.Equal(0, (await Next(alice, SkillService.SkillLoad, SkillLoadResp.Parser)).Result);
         }
+    }
+
+    [ClientDataFact]
+    public async Task APresetWithoutAPrerequisiteStillHoldsTheJobsFreeSkill()
+    {
+        // Arcane Protection (12110, Wizard 2200) is free (_iInitialLevel 1) yet lists 12002 as a prerequisite; a preset that
+        // never learned 12002 holds it at its free level, so switching to it must not be refused.
+        await using var alice = await InWorld("Alice");
+        await Next(alice, SkillService.SkillDataSync, DBSkillDataIncrement.Parser);
+        await Gm("alice", "!job 2200");
+        await Next(alice, SkillService.SkillDataSync, DBSkillDataIncrement.Parser,
+            m => !m.SyncAllMark && m.SkillAssignPlans?.Inc?.Value[0].SkillAssigns.ContainsKey(12110) == true);
+        await alice.SendGameAsync(SkillService.SwitchPlan, new SwitchPlanReq { Plan = 1 });
+        Assert.Equal(0, (await Next(alice, SkillService.SwitchPlan, SwitchPlanResp.Parser)).Result);
     }
 
     [ClientDataFact]

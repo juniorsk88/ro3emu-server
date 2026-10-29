@@ -208,8 +208,11 @@ public sealed class SkillService
         {
             var blank = new SkillPlan { IsUnlock = true };
             foreach (int group in skillData.SkillList)
-                blank.SkillAssigns[group] = new SkillData { SkillId = group,
-                    SkillLevel = normals.Contains(group) ? 1 : Initial(p, group) };
+                blank.SkillAssigns[group] = new SkillData
+                {
+                    SkillId = group,
+                    SkillLevel = normals.Contains(group) ? 1 : Initial(p, group)
+                };
             blank.SkillQueue[0] = new SkillData(); // paired by the client even in a fresh plan.
             blank.ManualLoadSkill.Add(new SkillData());
             blank.AutoLoadSkill.Add(new SkillData());
@@ -425,8 +428,11 @@ public sealed class SkillService
             }
             foreach (int group in generated.SkillList)
                 if (!plan.SkillAssigns.ContainsKey(group))
-                    plan.SkillAssigns[group] = new SkillData { SkillId = group,
-                        SkillLevel = IsNormalGroup(session.Progress!, group) ? 1 : Initial(session.Progress!, group) };
+                    plan.SkillAssigns[group] = new SkillData
+                    {
+                        SkillId = group,
+                        SkillLevel = IsNormalGroup(session.Progress!, group) ? 1 : Initial(session.Progress!, group)
+                    };
             var preview = CharacterService.GenreCloneProgress(session.Progress!);
             preview.Skills.Clear();
             foreach (int group in generated.SkillList)
@@ -713,7 +719,8 @@ public sealed class SkillService
         foreach (int group in tree)
         {
             int level = Level(p, group);
-            if (level <= 0) continue;
+            // A skill held only at its free level (SkillConfig._iInitialLevel) was never learned, so its prerequisites do not apply (inferred).
+            if (level <= 0 || level <= Initial(p, group)) continue;
             if (_data.Row("SkillConfig", RealId(group, level)) is not { } row) return false;
             if (!row.TryGetProperty("_kPreSkillRequired", out var pre) || pre.ValueKind != JsonValueKind.Array) continue;
             foreach (var req in pre.EnumerateArray())
