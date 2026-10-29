@@ -61,6 +61,7 @@ public sealed partial class EmblemService
 
     /// <summary>Set by PowerService: publish 31502/31503/5066 after a Soul Echo change (the caller holds the lock).</summary>
     internal Func<GameSession, Task>? PublishPower { get; set; }
+    internal Func<GameSession, Task>? SkillEffectsChanged { get; set; }
 
     /// <summary>Load before 5009 and ENTITYSELF; roll missing old instance attrs and repair stale active refs (inferred).</summary>
     public async Task LoadAsync(GameSession session)
@@ -235,6 +236,7 @@ public sealed partial class EmblemService
     {
         await SyncAsync(session);
         await PowerAsync(session, previousPower);
+        if (SkillEffectsChanged != null) await SkillEffectsChanged(session);
     }
 
     /// <summary>All active, extant GUIDs; the plan is authoritative for stat input.</summary>
@@ -344,6 +346,7 @@ public sealed partial class EmblemService
         await SyncAsync(session);
         await _character.RefreshStatsAsync(session);
         await PowerAsync(session, previous);
+        if (SkillEffectsChanged != null) await SkillEffectsChanged(session);
     }
 
     private int Gate(GameSession session) => session.Tasks != null && _data.Row("FunctionConfig", 55) != null

@@ -89,6 +89,56 @@ public sealed class MonsterHuntTests : IAsyncLifetime
     };
 
     [ClientDataFact]
+    public async Task MapAwardsRequireKillsPayOnceAndCompleteMapObjectives()
+    {
+        await using var alice = await OnHuntMap("Alice");
+        var s = Session(alice);
+        var tasks = Service<TaskService>();
+        const long southGate = 10100102;
+        async Task Claim(long map)
+        {
+            await alice.SendGameAsync(MonsterHuntService.GainMapAward, new AreaConcurGainMapAwardReq { MapId = map });
+            await Next(alice, MonsterHuntService.GainMapAward, AreaConcurGainMapAwardResp.Parser);
+        }
+        Assert.True(tasks.TargetsSupported(201001));
+        Assert.True(tasks.TargetsSupported(201003));
+        await OnLoop(() =>
+        {
+            s.AreaConcur!.MapInfo[Map] = new AreaConcurMapInfo { CurScore = 999 };
+            s.AreaConcur.MapInfo[southGate] = new AreaConcurMapInfo { CurScore = 1000 };
+            return Task.CompletedTask;
+        });
+        long before = await Read(() => Service<CharacterService>().CountOf(s, 1));
+        await Claim(Map); // one short
+        await Claim(999999); // unknown map
+        Assert.Equal(before, await Read(() => Service<CharacterService>().CountOf(s, 1)));
+        Assert.False(await Read(() => s.AreaConcur!.MapInfo[Map].IsClaimedAward));
+        await Claim(southGate);
+        Assert.True(await Read(() => s.AreaConcur!.MapInfo[southGate].IsClaimedAward));
+        Assert.Equal((1L, 1L), await Read(() => tasks.SnapshotTarget(s, [318003, southGate])));
+        Assert.Equal((1L, 2L), await Read(() => tasks.SnapshotTarget(s, [318001, 2])));
+        long paid = await Read(() => Service<CharacterService>().CountOf(s, 1));
+        Assert.True(paid > before);
+        await Claim(southGate);
+        Assert.Equal(paid, await Read(() => Service<CharacterService>().CountOf(s, 1)));
+        var stored = DBAreaConcurInfo.Parser.ParseFrom(Service<RoleStore>().LoadAreaConcur(s.Role!.Id)!);
+        Assert.True(stored.MapInfo[southGate].IsClaimedAward);
+
+        await using var bob = await InWorld("Bob");
+        var locked = Session(bob);
+        await OnLoop(() =>
+        {
+            locked.AreaConcur!.MapInfo[Map] = new AreaConcurMapInfo { CurScore = 1000 };
+            return Task.CompletedTask;
+        });
+        long lockedBalance = await Read(() => Service<CharacterService>().CountOf(locked, 1));
+        await bob.SendGameAsync(MonsterHuntService.GainMapAward, new AreaConcurGainMapAwardReq { MapId = Map });
+        await Next(bob, MonsterHuntService.GainMapAward, AreaConcurGainMapAwardResp.Parser);
+        Assert.False(await Read(() => locked.AreaConcur!.MapInfo[Map].IsClaimedAward));
+        Assert.Equal(lockedBalance, await Read(() => Service<CharacterService>().CountOf(locked, 1)));
+    }
+
+    [ClientDataFact]
     public async Task AFieldKillCountsInItsOwnTransactionAndDropsTheRegionPoint()
     {
         await using var alice = await OnHuntMap("Alice");
@@ -153,6 +203,8 @@ public sealed class MonsterHuntTests : IAsyncLifetime
         }
         await ClaimArea(1);
         Assert.False(await Read(() => s.AreaConcur!.AreaInfo[Area].ClaimedAward.ContainsKey(1)));
+        Assert.True(Service<TaskService>().TargetsSupported(201002));
+        Assert.Equal((0L, 1L), await Read(() => Service<TaskService>().SnapshotTarget(s, [318002, 1])));
         await OnLoop(() =>
         {
             foreach (long id in new[] { 175L, 176L, 177L })
@@ -161,6 +213,7 @@ public sealed class MonsterHuntTests : IAsyncLifetime
         });
         await ClaimArea(1);
         Assert.True(await Read(() => s.AreaConcur!.AreaInfo[Area].ClaimedAward[1]));
+        Assert.Equal((1L, 1L), await Read(() => Service<TaskService>().SnapshotTarget(s, [318002, 1])));
         Assert.Equal(1, await Read(() => Service<CharacterService>().CountOf(s, 1300067))); // Blue Cards Selection Chest
         await ClaimArea(1);
         Assert.Equal(1, await Read(() => Service<CharacterService>().CountOf(s, 1300067)));

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Romsg;
 using Ro3Emu.Bot;
+using Ro3Emu.Server.Accounts;
 using Ro3Emu.Server.Data;
 using Ro3Emu.Server.Data.Config;
 using Ro3Emu.Server.Game;
@@ -9,6 +10,60 @@ namespace Ro3Emu.Tests;
 
 public sealed partial class SkillCombatTests
 {
+    [ClientDataFact]
+    public async Task HolyCrossUsesTheTwoHandedSpearDamageBranchOnlyWhenEquipped()
+    {
+        await using var alice = await InWorld("Alice");
+        var data = _app.Services.GetRequiredService<GameData>();
+        var combat = _app.Services.GetRequiredService<CombatService>();
+        await Loop.InvokeAsync(() =>
+        {
+            var s = Session("alice");
+            var holyCross = SkillConfig.Get(data, 1141101)!.Value.Row;
+            var other = SkillConfig.Get(data, 1510201)!.Value.Row;
+            s.Items.RemoveAll(i => i.Grid is 1 or 2);
+            var weapon = new InvItem { Entry = 2050120, Stack = 1, Pack = 2, Grid = 0 };
+            s.Items.Add(weapon);
+            Assert.Equal(0, combat.HolyCrossBranch(s, holyCross));
+            weapon.Grid = 1;
+            Assert.Equal(1, combat.HolyCrossBranch(s, holyCross));
+            Assert.Equal(0, combat.HolyCrossBranch(s, other));
+            weapon.Entry = 2040130;
+            Assert.Equal(0, combat.HolyCrossBranch(s, holyCross));
+            return Task.CompletedTask;
+        });
+    }
+
+    [ClientDataFact]
+    public async Task HolyCrossDealsMoreDamageWithTheTwoHandedSpear()
+    {
+        await using var alice = await InWorld("Alice");
+        await Gm("alice", "!lvl 99"); await Gm("alice", "!job 1410"); await Teach("alice", 11411);
+        _app.Services.GetRequiredService<CombatService>().Rolls = new GuardianStableDamageRolls();
+        async Task<long> Hit(int entry)
+        {
+            var monster = await Target("alice", stationary: true);
+            await Loop.InvokeAsync(() =>
+            {
+                var s = Session("alice");
+                s.Items.RemoveAll(i => i.Grid is 1 or 2);
+                s.Items.Add(new InvItem { Entry = entry, Stack = 1, Pack = 2, Grid = 1 });
+                s.SkillCds.Clear(); s.SkillModeCds.Clear();
+                monster.Hp = 100000;
+                return Task.CompletedTask;
+            });
+            await alice.SendGameAsync(CombatService.UseSkill, new CastSkillReq { SkillId = 1141101, TargetId = monster.Uid });
+            var accepted = await Next(alice, CombatService.UseSkill, CastSkillRsp.Parser);
+            Assert.Equal(0, accepted.Result);
+            var hit = await Next(alice, CombatService.SkillHit, SkillHitInfo.Parser, x => x.SessionId == accepted.SessionId);
+            await Task.Delay(1200);
+            return hit.Dsts.Single(d => d.DstID == monster.Uid).Damage;
+        }
+
+        long oneHand = await Hit(2040130), twoHand = await Hit(2050120);
+        Assert.InRange(twoHand * 100 / oneHand, 103, 106);
+    }
+
     // Sonic Blow's damage pairs are [plain, +20%, +25%]: the second below its _kLogicData 50% of Life, the third with
     // Supersonic Blow below its ${1}% (62 at level 1).
     [ClientDataFact]

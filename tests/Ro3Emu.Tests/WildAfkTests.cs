@@ -446,7 +446,11 @@ public sealed class WildAfkTests : IAsyncLifetime
         var session = Session(bot);
         return await Service<GameLoop>().InvokeAsync(() => Service<Ro3Emu.Server.Game.Ownership.OwnerRegistry>().RunAsync(
             "afk test period", [Ro3Emu.Server.Game.Ownership.ReservationKey.Role(session.Role!.Id)], () =>
-            Task.FromResult(SetYesterdayPeriod(session, liveness))));
+            {
+                var period = SetYesterdayPeriod(session, liveness);
+                sameReservation?.Invoke();
+                return Task.FromResult(period);
+            }));
     }
 
     private (long Old, long Boundary) SetYesterdayPeriod(GameSession s, long liveness)
@@ -513,21 +517,21 @@ public sealed class WildAfkTests : IAsyncLifetime
     {
         await using var bot = await InWorld();
         await Eligible(bot);
-        var (_, boundary) = await YesterdayPeriod(bot, liveness: 1000);
         var s = Session(bot);
         var accounts = Service<AccountStore>();
         int resets = 0;
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        accounts.BeforeOwnedCommitForTest = label =>
+        Task BeforeCommit(string label)
         {
             if (label != "economy/cd13e/daily-reset") return Task.CompletedTask;
             if (Interlocked.Increment(ref resets) != 1) return Task.CompletedTask;
             entered.TrySetResult();
             return release.Task;
-        };
+        }
         try
         {
+            var (_, boundary) = await YesterdayPeriod(bot, liveness: 1000, sameReservation: () => accounts.BeforeOwnedCommitForTest = BeforeCommit);
             // The daily ticker's reset holds its commit; the AFK timer query, a stage claim and a second daily
             // reconcile arrive while it is held and must all observe the new period, not reset it again.
             var first = OnLoop(() => Service<DailyActivityService>().ReconcileAsync(s));

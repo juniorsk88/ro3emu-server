@@ -434,6 +434,9 @@ public sealed class SkillService
                     && assigned.SkillLevel > Initial(preview, group)) preview.Skills[group] = assigned.SkillLevel;
             plan.SkillPoints.Clear();
             foreach (var (rank, points) in SkillPoints(preview)) plan.SkillPoints[rank] = Math.Max(0, points);
+            // A rebuilt plan (a job change, an invalid saved plan) keeps no bar, Auto-Battle or queue slot for a skill
+            // the plan no longer has: the client casts its AutoLoadSkill list as is and every cast came back 3002.
+            PruneLoads(plan, preview);
             if (plan.SkillQueue.Count == 0) plan.SkillQueue[0] = new SkillData();
             if (plan.ManualLoadSkill.Count == 0) plan.ManualLoadSkill.Add(new SkillData());
             if (plan.AutoLoadSkill.Count == 0) plan.AutoLoadSkill.Add(new SkillData());
@@ -713,7 +716,8 @@ public sealed class SkillService
         foreach (int group in tree)
         {
             int level = Level(p, group);
-            if (level <= 0) continue;
+            // A skill held only at its free level (SkillConfig._iInitialLevel) was never learned, so its prerequisites do not apply (inferred).
+            if (level <= 0 || level <= Initial(p, group)) continue;
             if (_data.Row("SkillConfig", RealId(group, level)) is not { } row) return false;
             if (!row.TryGetProperty("_kPreSkillRequired", out var pre) || pre.ValueKind != JsonValueKind.Array) continue;
             foreach (var req in pre.EnumerateArray())

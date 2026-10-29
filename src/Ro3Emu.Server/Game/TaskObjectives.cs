@@ -39,7 +39,8 @@ public sealed partial class TaskService
     // 318004 [318004, AreaConcurConfig id, n] "Reach @{1} progress toward the <Area> Monster Hunt full collection reward"
     // (growth manual 703040/704050/705030/706030): R is p2 (LC_InteractCondition.lua:5246-5266). The area's collection
     // progress, its claimed monster stages (MonsterHuntService; inferred: the original counter is not recovered).
-    private const int TMonsterHunt = 318004;
+    // 318001 counts claimed maps; 318003 names one map. 318002 is supported only for its sole configured threshold (1).
+    private const int TMonsterHunt = 318004, THuntMapRewards = 318001, THuntAreaReward = 318002, THuntMapReward = 318003;
 
     // 210011 [210011, n]: TaskConfig 1602120 "Guild Activities - Hunting Challenge" (type 16, _kEXECAction 115 3015) is
     // its only user. The client has no formatter for it; R is the trailing count, as the sibling 104011 caravan departure
@@ -165,7 +166,7 @@ public sealed partial class TaskService
 
     // 103020 CheckChatNum [n, channel] and 103003 CheckAuctionJoinCnt [n] (the one-line starter quests 100023 and 100006): each text message sent and
     // each accepted bid counts once since acceptance (inferred: the channel is not filtered).
-    private const int TChatCount = 103020, TAuctionJoins = 103003;
+    private const int TChatCount = 103020, TAuctionJoins = 103003, TTitle = 103001;
 
     // 103013 CheckGuildKaoHuoJoinCnt [n] (the guild campfire, like 106018), 103015 CheckGuildTournamentJoinCnt [n] (a Guild League match, like 106603) and 103016
     // CheckOnHookTime [minutes] (the wild AFK time of the day, like 106901 in seconds): the starter quests 100016, 100018, 100019 and 306060 (inferred).
@@ -200,9 +201,9 @@ public sealed partial class TaskService
     {
         [TDialog, _, _, _] or [TArea, _, _] or [TJobChange, _] or [TTaskDone, _] or [TJobRank, _] or [TAreaAction, _, _, _]
             or [TGuide, _] or [TPydDownload, 1] or [TRentCareerSpecial, _] or [TValhallaLayer, _] or [TPetCamp, 0]
-            or [TJoinGuild, 1] or [TNowMount, _, _] => 1,
+            or [TJoinGuild, 1] or [TNowMount, _, _] or [TTitle, _] or [THuntMapReward, _] or [THuntAreaReward, 1] => 1,
         [TKillParty or TKillMvpParty, var n, _] => n,
-        [TTerritoryPoints, var n] => n,
+        [TTerritoryPoints or THuntMapRewards, var n] => n,
         [TChatCount, var n, _] => n,
         [TAuctionJoins, var n] => n,
         [TKaoHuoJoins or TTournamentJoins or TOnHookMinutes, var n] => n,
@@ -260,6 +261,7 @@ public sealed partial class TaskService
             TAreaAction => _data.Row("MapConfig", t[1]) != null && t[2] > 0 && _data.Row("PerformanceConfig", t[3]) != null,
             TKill or TKillInvolved => t[1..^1].All(npc => _data.Row("NPCConfig", npc) != null),
             TNowMount => t[2] > 0,
+            TTitle => _data.Row("TitleConfig", t[1]) != null,
             TDungeonBoss => _data.Row("NPCConfig", t[1]) != null,
             TKillParty or TKillMvpParty => _data.Row("NPCConfig", t[2]) != null,
             TJobRank => t[1] > 0,
@@ -272,6 +274,7 @@ public sealed partial class TaskService
             TCraft => t[1] >= 0 && t[2] > 0 && t[4] is >= 0 and <= 10,
             TValhallaLayer => _data.Row("HeroicSpiritLayerConfig", t[1]) != null,
             TMonsterHunt => _data.Row("AreaConcurConfig", t[1]) != null,
+            THuntMapReward => _data.Row("AreaConcurMapConfig", t[1]) != null,
             TStunts => t[1] >= 1 && t[2] == 0 && t[3] == 0,
             TTenBossWin => t[2..].All(boss => _data.Row("TenGameplayBossConfig", boss) != null),
             TLeagueJoin => t[1] is >= 0 and <= 3,
@@ -308,6 +311,12 @@ public sealed partial class TaskService
         return t[0] switch
         {
             TBaseLevel => p.Level,
+            TTitle => s.TitleInfo == null ? -1 : _data.Row("TitleConfig", s.TitleInfo.TitleId) is { } currentTitle
+                && _data.Row("TitleConfig", t[1]) is { } requiredTitle
+                && GameData.Int(currentTitle, "_kIndex") >= GameData.Int(requiredTitle, "_kIndex") ? 1 : 0,
+            THuntMapRewards => s.AreaConcur == null ? -1 : s.AreaConcur.MapInfo.LongCount(entry => entry.Value.IsClaimedAward),
+            THuntMapReward => s.AreaConcur == null ? -1 : s.AreaConcur.MapInfo.GetValueOrDefault(t[1])?.IsClaimedAward == true ? 1 : 0,
+            THuntAreaReward => s.AreaConcur == null ? -1 : s.AreaConcur.AreaInfo.Values.Any(area => area.ClaimedAward.Values.Any(claimed => claimed)) ? 1 : 0,
             // 500130 [106901,3600] displays whole consumed minutes. Reading the committed
             // daily counter also repairs a disconnect between 5035 persistence and the quest sync (inferred).
             TOnHookMinutes => s.WildAfk is { } hook && s.Daily?.DailyEpoch == hook.DailyEpoch ? hook.ConsumedTodaySeconds / 60 : 0,

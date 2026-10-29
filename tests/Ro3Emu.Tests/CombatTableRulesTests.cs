@@ -20,6 +20,29 @@ public sealed class CombatTableRulesTests
 
     private static GameData Data => Exported.Value;
 
+    [ClientDataFact]
+    public void SoulExpansionVariantsAddTheirTwoNoteRatios()
+    {
+        Assert.Equal(8000, CombatService.DamageRatio(Data.Row("SkillConfig", 1230201)!.Value, 0));
+        Assert.Equal(9000, CombatService.DamageRatio(Data.Row("SkillConfig", 1230211)!.Value, 0));
+        Assert.Equal(9000, CombatService.DamageRatio(Data.Row("SkillConfig", 1232811)!.Value, 0));
+        Assert.Equal(8000, CombatService.DamageRatio(Data.Row("SkillConfig", 1231601)!.Value, 0));
+        Assert.Equal(5355, CombatService.DamageRatio(Data.Row("SkillConfig", 1141101)!.Value, 1));
+    }
+
+    [ClientDataFact]
+    public void ShieldSkillsSelectTheClientDescribedMonsterBonus()
+    {
+        foreach (int id in new[] { 1160801, 1160811, 1161001, 1161101, 1163601, 1163611, 1163841, 1163871 })
+        {
+            var row = Data.Row("SkillConfig", id)!.Value;
+            Assert.Equal(1, CombatService.MonsterBonusBranch(row));
+            Assert.True(CombatService.DamageRatio(row, 1) > CombatService.DamageRatio(row, 0));
+        }
+        Assert.Equal(0, CombatService.MonsterBonusBranch(Data.Row("SkillConfig", 1141101)!.Value));
+        Assert.Equal(0, CombatService.MonsterBonusBranch(Data.Row("SkillConfig", 1231601)!.Value));
+    }
+
     private static RoleProgress Role(int career, params int[] skills)
     {
         var p = new RoleProgress { Career = career, Level = 99 };

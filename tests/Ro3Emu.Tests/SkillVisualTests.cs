@@ -153,6 +153,15 @@ public sealed class SkillVisualTests : IDisposable
     }
 
     [Fact]
+    public void PlayerCombatUsesSkillElementBonusesAndCardResistances()
+    {
+        long Stat(int id) => id switch { 304 => 1000, 314 => 330, _ => 0 };
+        Assert.Equal(1100, CombatService.ApplyDamageBonuses(1000, true, true, false, false, Stat, null, skillElement: 4, pvp: true));
+        Assert.Equal(967, CombatService.ApplyDamageReductions(1000, true, true, false, Stat, null, skillElement: 4, pvp: true));
+        Assert.Equal(1000, CombatService.ApplyDamageReductions(1000, true, true, false, Stat, null, skillElement: 5, pvp: true));
+    }
+
+    [Fact]
     public void AnArrowGivesItsElementOnlyWhenItsTextSaysItChangesTheAttackProperty()
     {
         const string fire = "An arrow with a tip that can be set ablaze.\n<color=#6e8bc8>Equipping Fire Arrow with a bow changes your attack property to Fire.</color>";

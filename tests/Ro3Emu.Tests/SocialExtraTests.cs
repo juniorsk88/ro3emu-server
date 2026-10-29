@@ -83,6 +83,9 @@ public sealed class SocialExtraTests : IAsyncLifetime
         var summary = (Dictionary<object, object?>)((object?[])directory["SummaryList"]!).Single()!;
         var decoded = TeamTotalSimpleInfo.Parser.ParseFrom((byte[])summary["GameSummaryData"]!);
         Assert.Equal(created.TeamId, decoded.Info.TeamId);
+        var tavern = await bob.MicroPositionalAsync("PartyService", "getPartysSummary", [4, Array.Empty<object>(), Array.Empty<object>(), Array.Empty<object>(), 0, 100]);
+        Assert.True(Ok(tavern));
+        Assert.Empty((object?[])tavern["SummaryList"]!);
         var party = await bob.MicroPositionalAsync("PartyService", "getParty", [created.TeamId.ToString()]);
         Assert.True(Ok(party));
         Assert.NotNull(((Dictionary<object, object?>)party["Party"]!)["PartyData"]);

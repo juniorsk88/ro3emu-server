@@ -97,4 +97,18 @@ public readonly partial record struct SkillConfig(JsonElement Row)
         node["_kDamageParam2"] = new System.Text.Json.Nodes.JsonArray([.. flats.Select(v => (System.Text.Json.Nodes.JsonNode)v)]);
         return JsonSerializer.SerializeToElement(node);
     }
+
+    public JsonElement WithBuff2(long[][] buffs)
+    {
+        var node = System.Text.Json.Nodes.JsonNode.Parse(Row.GetRawText())!.AsObject();
+        node["_kBuff2"] = JsonSerializer.SerializeToNode(buffs);
+        return JsonSerializer.SerializeToElement(node);
+    }
+
+    public JsonElement WithRange(long[] range)
+    {
+        var node = System.Text.Json.Nodes.JsonNode.Parse(Row.GetRawText())!.AsObject();
+        node["_kRange"] = JsonSerializer.SerializeToNode(range);
+        return JsonSerializer.SerializeToElement(node);
+    }
 }

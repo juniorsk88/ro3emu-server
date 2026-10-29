@@ -172,6 +172,18 @@ public sealed class GuildChallengeTests : IAsyncLifetime
             return Task.CompletedTask;
         });
         await bot.SendGameAsync(MsgId.Walk, new WalkReq { Pos = pos, BStop = true, SpeedRate = 1 });
+        bool arrived = false;
+        for (var until = DateTime.UtcNow.AddSeconds(10); !arrived && DateTime.UtcNow < until;)
+        {
+            await OnLoop(() =>
+            {
+                var current = Session(bot).Position;
+                arrived = MonsterService.Distance(current.X, current.Z, pos.X, pos.Z) < 0.1f;
+                return Task.CompletedTask;
+            });
+            if (!arrived) await Task.Delay(20);
+        }
+        Assert.True(arrived, "the test walk did not reach the monster");
         // The basic attack rolls HIT against the monster's FLEE, so one swing may miss; swing again
         // (cooldown cleared as a test aid) until the authoritative lethal hit arrives.
         for (int swing = 0; ; swing++)

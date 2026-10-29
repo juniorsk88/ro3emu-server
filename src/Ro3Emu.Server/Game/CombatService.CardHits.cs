@@ -9,8 +9,18 @@ namespace Ro3Emu.Server.Game;
 /// hit settlement (MVP/event damage, kill rewards to the player) and a SkillHit so the client draws the number.</summary>
 public sealed partial class CombatService
 {
-    /// <summary>A player's skill hit another player (attacker, target, the skill row, damage dealt): card reflects.</summary>
+    /// <summary>A player's skill hit another player (attacker, target, the skill row, damage dealt): card effects and reactions.</summary>
     public List<Func<GameSession, GameSession, JsonElement, long, Task>> PvpHitTaken { get; } = new();
+
+    internal async Task SetMonsterSpAsync(MonsterUnit monster, long sp)
+    {
+        monster.Sp = sp;
+        await _world.ToUnitViewersAsync(monster, AoiAttrChange, new AOIAttrChange
+        {
+            EntityUuid = (ulong)monster.Uid,
+            Property = { new AoIProperty { Idx = 2001, Data = monster.Sp } },
+        });
+    }
 
     /// <summary>Damage reflected to the attacker by a card. It can take the attacker down to 1 HP but never kill (inferred: the death path is the
     /// victim's own handling of a lethal hit).</summary>
@@ -128,7 +138,7 @@ public sealed partial class CombatService
         var attacker = new Fighter(stats[103], stats[104], stats[109], stats[111], s.Progress.Level, AttackElement(s, row)) { EleIgnore = stats[235], PenDef = stats[217], PenDefPct = stats[218], PenMdef = stats[219], PenMdefPct = stats[220] };
         var defender = new Fighter(0, 0, target.Template.Flee, 0, target.Template.Level, target.Template.Element)
         { Def = target.Template.Def, Mdef = target.Template.Mdef, Flee = target.Template.Flee };
-        var (amount, result) = Damage(attacker, defender, row);
+        var (amount, result) = Damage(attacker, defender, row, Math.Max(SoulStrikeBranch(row, target.Template.Element), Math.Max(HolyCrossBranch(s, row), MonsterBonusBranch(row))));
         if (amount <= 0) return;
         if (percent != 100) amount = amount * percent / 100;
         foreach (var modifier in DamageAdjusters) amount = Math.Max(0, modifier(s, target, row, result, amount));

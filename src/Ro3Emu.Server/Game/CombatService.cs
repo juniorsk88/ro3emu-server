@@ -253,6 +253,7 @@ public sealed partial class CombatService : IGameTicker
     internal Func<GameSession, JsonElement, int, JsonElement>? TargetCountRow { get; set; }
     /// <summary>May the caster's skill put this _kBuff1 buff on the recipient (TalentProcs: talent-gated buffs).</summary>
     internal Func<GameSession, GameSession, int, bool>? SkillBuffAllowed { get; set; }
+    internal Func<GameSession, JsonElement, int, bool>? CardGuaranteesHostileBuff { get; set; }
     public List<Func<GameSession, MonsterUnit, JsonElement, DamageHitResult, long, long>> DamageAdjusters { get; } = new();
     public List<Func<GameSession, MonsterUnit, JsonElement, long, long>> ExtraHitDamage { get; } = new();
 
@@ -281,7 +282,7 @@ public sealed partial class CombatService : IGameTicker
 
     public CombatService(World world, MonsterService monsters, CharacterService character, SkillService skills, SceneService scene, BuffService buffs,
         WorldData worldData, SessionRegistry sessions, GameData data, GameLoop loop, ILogger<CombatService> log, PetService pets,
-        SeasonTalentService talents, IOptions<ServerOptions> options)
+        SeasonTalentService talents, EmblemService emblems, IOptions<ServerOptions> options)
     {
         this._world = world;
         this._monsters = monsters;
@@ -306,6 +307,8 @@ public sealed partial class CombatService : IGameTicker
         character.ExtraAttributes.Add(ResonanceAttributes); // Job Resonance stats (CombatService.Restraint)
         world.UnitRemoved.Add(unit => { if (unit is MonsterUnit m) _fightingMonsters.Remove(m); return Task.CompletedTask; });
         skills.Learned.Add(RefreshSkillParametersAsync);
+        character.JobChanged.Add(RefreshSkillParametersAsync);
+        emblems.SkillEffectsChanged = RefreshSkillParametersAsync;
         skills.Learned.Add(character.RefreshStatsAsync);
         buffs.Changed.Add(RefreshSkillParametersAsync);
         talents.EffectsChanged.Add(RefreshSkillParametersAsync);
@@ -684,12 +687,8 @@ public sealed partial class CombatService : IGameTicker
     private double BaseDamage(Fighter a, Fighter b, JsonElement skill, int branch, out bool magic)
     {
         magic = GameData.Int(skill, "_iDmgType") == 2;
-        var ratios = Numbers(skill, "_kDamageParam1");
         var flats = Numbers(skill, "_kDamageParam2");
-        double p1 = ratios.Length > branch ? ratios[branch] : 10000, p2 = flats.Length > branch ? flats[branch] : 0;
-        // Soul Expansion launches "${2} bursts ... dealing @{1} instances of damage equal to MATK * ${3}%": its two equal entries are two bursts, delivered
-        // as one number. (inferred: the other multi-valued skills mix branches and hits, and need their own description read first)
-        if (ratios.Length > 1 && new Ro3Emu.Server.Data.Config.SkillConfig(skill).ScriptLogic is "SoulExpansion" or "SoulExpansion_Copy") p1 = ratios.Sum();
+        double p1 = DamageRatio(skill, branch), p2 = flats.Length > branch ? flats[branch] : 0;
         double dmg = (magic ? a.Matk : a.Atk) * p1 / 10000 + p2;
         // Defense: def / (def + ParDef 20 × the defender's level), the shape of the client's damage-reduction tooltip.
         double def = magic ? b.Mdef : b.Def;
@@ -704,6 +703,17 @@ public sealed partial class CombatService : IGameTicker
         if (factor < 1 && a.EleIgnore != 0) factor += (1 - factor) * Math.Clamp(a.EleIgnore / 10000.0, -1, 1);
         else if (factor > 1 && b.EleResist != 0) factor -= (factor - 1) * Math.Clamp(b.EleResist / 10000.0, -1, 1);
         return dmg * factor;
+    }
+
+    // Soul Expansion's two notes each deal the listed ratio; this server currently publishes their combined hit.
+    internal static double DamageRatio(JsonElement skill, int branch)
+    {
+        var ratios = Numbers(skill, "_kDamageParam1");
+        string script = new Ro3Emu.Server.Data.Config.SkillConfig(skill).ScriptLogic;
+        // Piercing Shadow's first two components add to its described total; mode 1 adds a separate shadow attack.
+        if (script == "wudizhan" && ratios.Length >= 2) return ratios[0] + ratios[1];
+        return ratios.Length > 1 && script is "SoulExpansion" or "SoulExpansion_Copy" or "SoulExpansion1" or "SoulExpansion1_Copy"
+            ? ratios.Sum() : ratios.Length > branch ? ratios[branch] : 10000;
     }
 
     /// <summary>The expected damage of one hit (hit rate, mean float, crit share) from the same formula.</summary>

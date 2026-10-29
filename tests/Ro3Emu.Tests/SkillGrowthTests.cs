@@ -240,6 +240,20 @@ public sealed class SkillGrowthTests : IAsyncLifetime
     }
 
     [ClientDataFact]
+    public async Task APresetWithoutAPrerequisiteStillHoldsTheJobsFreeSkill()
+    {
+        // Arcane Protection (12110, Wizard 2200) is free (_iInitialLevel 1) yet lists 12002 as a prerequisite; a preset that
+        // never learned 12002 holds it at its free level, so switching to it must not be refused.
+        await using var alice = await InWorld("Alice");
+        await Next(alice, SkillService.SkillDataSync, DBSkillDataIncrement.Parser);
+        await Gm("alice", "!job 2200");
+        await Next(alice, SkillService.SkillDataSync, DBSkillDataIncrement.Parser,
+            m => !m.SyncAllMark && m.SkillAssignPlans?.Inc?.Value[0].SkillAssigns.ContainsKey(12110) == true);
+        await alice.SendGameAsync(SkillService.SwitchPlan, new SwitchPlanReq { Plan = 1 });
+        Assert.Equal(0, (await Next(alice, SkillService.SwitchPlan, SwitchPlanResp.Parser)).Result);
+    }
+
+    [ClientDataFact]
     public async Task PlansNameGenreAndSelectedLevelsSurviveRelog()
     {
         await using (var alice = await InWorld("Alice"))
@@ -420,5 +434,31 @@ public sealed class SkillGrowthTests : IAsyncLifetime
         Assert.Equal(1, durable.CurrentPlanIndex);
         Assert.Equal("Migrated", durable.SkillAssignPlans[1].Name);
         Assert.Equal(13006, durable.SkillAssignPlans[1].SkillQueue[0].SkillId);
+    }
+
+    [ClientDataFact]
+    public async Task AJobChangeDropsAnUnlearnedSkillFromTheAutoBattleList()
+    {
+        await using var bot = await InWorld("Auto");
+        await Gm("auto", "!job 1100");
+        var learn = new SkillGrowthSkillPlanUpdateReq { Plan = 0 };
+        learn.LevelUpList[11001] = new SkillData { SkillId = 11001, SkillLevel = 1 };
+        await bot.SendGameAsync(SkillService.PlanUpdate, learn);
+        Assert.Equal(0, (await Next(bot, SkillService.PlanUpdate, SkillGrowthSkillPlanUpdateResp.Parser)).Result);
+        await bot.SendGameAsync(SkillService.SkillLoad, new SkillLoadReq
+        {
+            OpType = (SkillLoadOperation)1, IsManual = false, SocketNum = 0, Info = new SkillData { SkillId = 11001, SkillLevel = 1 },
+        });
+        Assert.Equal(0, (await Next(bot, SkillService.SkillLoad, SkillLoadResp.Parser)).Result);
+        var session = _app.Services.GetRequiredService<SessionRegistry>().All().Single(x => x.Account == "auto");
+        Assert.Contains(session.SkillPlans!.SkillAssignPlans[0].AutoLoadSkill, load => load.SkillId == 11001);
+
+        // Job 2100 has no Bash: the rebuilt plan must not leave it in the Auto-Battle list, where every cast would be
+        // refused 3002 (Skill has not been learned).
+        await Gm("auto", "!job 2100");
+        await Task.Delay(500);
+        var sent = await _app.Services.GetRequiredService<GameLoop>().InvokeAsync(() =>
+            Task.FromResult(_app.Services.GetRequiredService<SkillService>().Build(session)));
+        Assert.DoesNotContain(sent.SkillAssignPlans[0].AutoLoadSkill, load => load.SkillId == 11001);
     }
 }

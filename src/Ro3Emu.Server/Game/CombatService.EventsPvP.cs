@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Romsg;
+using Ro3Emu.Server.Data.Config;
 
 namespace Ro3Emu.Server.Game;
 
@@ -98,6 +99,12 @@ public sealed partial class CombatService
                 if (!ReferenceEquals(target.Role, targetRole)) continue;
                 await _character.SetHpSpAsync(target, null, null); // publish current HP after the serialized reservation
                 if (!ReferenceEquals(target.Role, targetRole)) continue;
+                if (hp > 0 && result != DamageHitResult.Miss && currentSource()
+                    && CurrentPlayerHit(source, target, attackerRole, targetRole, sceneId) && Script(row) == "IgnitionBreak")
+                    foreach (var tuple in new SkillConfig(row).Buff2)
+                        if (tuple.Length > 0 && tuple[0] == 901601
+                            && RollHostileBuff(JsonSerializer.SerializeToElement(tuple), source, null, target, null, out int id, out int duration, row))
+                            await _buffs.AddAsync(target, id, duration, attackerRole.Id);
                 if (CurrentPlayerHit(source, target, attackerRole, targetRole, sceneId)) await FightingAsync(source);
                 await FightingAsync(target);
                 // The knockback or pull of a hit that left the target alive, as the same skill moves a monster.
@@ -156,7 +163,7 @@ public sealed partial class CombatService
         if (!options.Value.DamageBonusAttributes || damage <= 0) return damage;
         bool magic = Ro3Emu.Server.Data.GameData.Int(row, "_iDmgType") == 2, ranged = Ro3Emu.Server.Data.GameData.Int(row, "_iDistanceType") == 2, critical = result == DamageHitResult.Critical;
         int element = HitElement(source, row);
-        damage = ApplyDamageBonuses(damage, magic, ranged, Ro3Emu.Server.Data.GameData.Int(row, "_iIsNormalAtk") == 1, critical, id => attack[id], null, element, pvp: true);
+        damage = ApplyDamageBonuses(damage, magic, ranged, Ro3Emu.Server.Data.GameData.Int(row, "_iIsNormalAtk") == 1, critical, id => DamageAttribute(source, row, attack, id), null, element, pvp: true);
         foreach (var negate in IncomingHitNegators) if (negate(target, magic)) return 0;
         return ApplyDamageReductions(damage, magic, ranged, critical, id => defend[id], null, element, pvp: true);
     }
@@ -174,7 +181,7 @@ public sealed partial class CombatService
         };
         var b = new Fighter(0, 0, 0, 0, target.Progress!.Level, ArmorElement(target))
         { Def = defend[AttributeId.Def], Mdef = defend[AttributeId.Mdef], Flee = defend[AttributeId.Flee], ResCri = defend[AttributeId.ResCri], CritReduce = defend[238], EleResist = defend[236] };
-        var (damage, result) = Damage(a, b, row, bonusCrit: GuardianPetRules.CriticalChance(row),
+        var (damage, result) = Damage(a, b, row, Math.Max(HolyCrossBranch(source, row), SoulStrikeBranch(row, b.Element)), bonusCrit: GuardianPetRules.CriticalChance(row),
             forceCrit: GuardianPetRules.CriticalAtHp(row, defend[AttributeId.Hp], defend[AttributeId.MaxHp]));
         damage = PvpAttributeDamage(source, target, row, result, damage, attack, defend);
         damage = GuardianPetRules.DirectDamage(row, damage);

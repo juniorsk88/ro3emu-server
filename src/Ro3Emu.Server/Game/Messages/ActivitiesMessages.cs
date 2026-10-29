@@ -26,7 +26,7 @@ public sealed class ActivitiesMessages(PraiseService praise, CasualBattleService
         routes.AdmitRole(id => id is ValhallaService.Challenge);
         routes.AdmitEconomic(id => id is ValhallaService.Pray);
         // Monster Hunt stage claims pay their awards.
-        routes.AdmitEconomic(id => id is MonsterHuntService.GainAreaAward or MonsterHuntService.GainMonsterAward);
+        routes.AdmitEconomic(id => id is MonsterHuntService.GainMapAward or MonsterHuntService.GainAreaAward or MonsterHuntService.GainMonsterAward);
         // Seven-Day Goal task and score claims pay their awards.
         routes.AdmitEconomic(id => id is FirstHeartService.GetTaskReward or FirstHeartService.GetScoreReward);
         routes.AdmitRole(id => id is TowerService.Info or TowerService.SetPets or TowerService.FirstPassRange
@@ -329,6 +329,10 @@ public sealed class ActivitiesMessages(PraiseService praise, CasualBattleService
         routes.Map(FirstHeartService.GetScoreReward, "firstHeart", async (session, msgId, body) =>
         {
             await firstHeart.ClaimScoreAsync(session, FirstHeartGetScoreRewardReq.Parser.ParseFrom(body.Span));
+        });
+        routes.Map(MonsterHuntService.GainMapAward, "monsterHunt", async (session, msgId, body) =>
+        {
+            await monsterHunt.ClaimMapAsync(session, AreaConcurGainMapAwardReq.Parser.ParseFrom(body.Span));
         });
         routes.Map(MonsterHuntService.GainMonsterAward, "monsterHunt", async (session, msgId, body) =>
         {

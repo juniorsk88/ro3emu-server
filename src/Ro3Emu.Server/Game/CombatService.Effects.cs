@@ -100,7 +100,7 @@ public sealed partial class CombatService
     {
         var row = action.Row;
         int max = (int)Math.Max(1, GameData.Int(row, "_iTargetMax"));
-        if (GameData.Int(row, "_iRangeType") != 2 && radiusOverride == null)
+        if (!AreaDamageRow(row) && radiusOverride == null)
         {
             var target = FindMonster(s.WorldScene, action.Request.TargetId);
             return target != null && target.Hp > 0 && CanHitMonster(s, target) && Relation(row, false, race: target.Template.Race) ? [target] : [];
@@ -175,8 +175,12 @@ public sealed partial class CombatService
                     .OrderBy(p => Distance(p.Position, center)).Take((int)Math.Max(1, GameData.Int(row, "_iTargetMax"))));
                 if (allies.Count == 0 && Relation(row, true, true)) allies.Add(s);
             }
+            // Highness Heal restores the caster as well as its selected ally.
+            if (chosenAllies == null && script == "HighHeal" && allies.Count > 0 && !allies.Contains(s)) allies.Add(s);
         }
         var stats = _character.Stats(s);
+        var psalm = field == null && friendly && allies.Count > 0 ? EchoPsalm(s, row, stats) : null;
+        if (psalm is { Shield: > 0 } psalmInfo) s.SkillProtocol.EchoPsalmReadyMs = Now + psalmInfo.Cooldown;
         var attacker = new Fighter(stats[103], stats[104], stats[109], stats[111], s.Progress!.Level, AttackElement(s, row)) { CritBonus = stats[200] + stats[237], EleIgnore = stats[235], PenDef = stats[217], PenDefPct = stats[218], PenMdef = stats[219], PenMdefPct = stats[220] };
         var hit = new SkillHitInfo
         {
@@ -230,7 +234,7 @@ public sealed partial class CombatService
                 if (CanApplyMoreEffects())
                     foreach (var tuple in Tuples(row, "_kBuff2"))
                         if (CanApplyMoreEffects() && GuardianAllowsHostileBuff(row, tuple, alreadySlowed.Contains(target.Uid))
-                            && RollHostileBuff(tuple, s, null, null, target, out int id, out int duration))
+                            && RollHostileBuff(tuple, s, null, null, target, out int id, out int duration, row))
                             await _buffs.AddSupportAsync(target, id, duration, castingRole.Id,
                                 attributeMultiplier: GuardianPetRules.BuffMultiplier(row), guardianOwned: IsGuardianEffect(row));
                 if (CanApplyMoreEffects() && script is ("Provoke" or "Taunt")) _monsters.Engage(target, s);
@@ -240,6 +244,8 @@ public sealed partial class CombatService
             foreach (var recipient in friendly ? allies : new List<GameSession> { s })
             {
                 if (!CanApplyMoreEffects()) break;
+                if (psalm is { Shield: > 0 } blessing)
+                    await _buffs.AddSupportAsync(recipient, blessing.Buff, blessing.Duration, castingRole.Id, blessing.Shield);
                 if (field == null)
                 {
                     int buffIndex = 0;
@@ -675,9 +681,9 @@ public sealed partial class CombatService
     /// <paramref name="go"/> m away, or with a negative value a pull that stops that far in front of the source (31112,
     /// MoveType 2, on the effect's curve). Shared by boss skills and PvP hits.
     /// </summary>
-    private async Task KnockPlayerAsync(GameSession p, float fromX, float fromZ, float go, int skillId, int effectId, int ms)
+    internal async Task KnockPlayerAsync(GameSession p, float fromX, float fromZ, float go, int skillId, int effectId, int ms)
     {
-        if (p.Dead || p.SceneLoading || p.Role is not { } role) return;
+        if (p.Dead || p.SceneLoading || p.Role is not { } role || go > 0 && _buffs.Refuses?.Invoke(p, BuffService.KnockBackGroup) == true) return;
         float dx = p.Position.X - fromX, dz = p.Position.Z - fromZ, length = MathF.Sqrt(dx * dx + dz * dz);
         if (length < 0.001f || go < 0 && length <= -go) return;
         float distance = go >= 0 ? go : -(length + go);
@@ -849,9 +855,15 @@ public sealed partial class CombatService
     }
 
     /// <summary>The event players a cast can hit: its area's, a guardian's own area selection, or its locked target.</summary>
+    // Rolling Cutter's description and _iTargetMax specify an area despite _iRangeType 1.
+    private static bool AreaDamageRow(JsonElement row) => GameData.Int(row, "_iRangeType") == SkillRelease.Area
+        || new SkillConfig(row).SkillId == 15303;
+
+    // Tetra Vortex and its Reading copy affect the circle around the chosen point (SkillConfig 12316/12326).
     private GameSession[] EffectPlayerTargets(GameSession s, ActiveSkillCast action, Vec3 center) =>
-        GameData.Int(action.Row, "_iRangeType") == SkillRelease.Area
-            ? IsGuardianEffect(action.Row) ? GuardianPlayerTargets(s, action, center) : EventAreaTargets(s, action.Row)
+        AreaDamageRow(action.Row)
+            ? IsGuardianEffect(action.Row) || new SkillConfig(action.Row).SkillId is 12316 or 12326
+                ? GuardianPlayerTargets(s, action, center) : EventAreaTargets(s, action.Row)
             : EventTarget(s, action.Request.TargetId) is { } eventTarget
                 && PlayerDistance(s, eventTarget) <= Range(action.Row) + 1.5f ? [eventTarget] : [];
 
@@ -860,7 +872,10 @@ public sealed partial class CombatService
     private (long Amount, DamageHitResult Result) MonsterHitDamage(GameSession s, Fighter attacker, MonsterUnit target,
         JsonElement row, string script)
     {
-        var (amount, result) = Damage(attacker, MonsterFighter(target), row, script == "Heal" ? 1 : SonicBlowBranch(s, target, row),
+        var (amount, result) = Damage(attacker, MonsterFighter(target), row, script == "Heal" ? 1
+            : script == "HolyCross" ? HolyCrossBranch(s, row)
+            : script == "SonicBlow" ? SonicBlowBranch(s, target, row)
+            : Math.Max(MonsterBonusBranch(row), SoulStrikeBranch(row, target.Template.Element)),
             GuardianPetRules.CriticalChance(row) + SkillParameterRules.CritChance(s, _data, row),
             GuardianPetRules.CriticalAtHp(row, target.Hp, target.Template.MaxHp));
         if (row.TryGetProperty("_ro3GuardianFixedHit", out var fixedValue))

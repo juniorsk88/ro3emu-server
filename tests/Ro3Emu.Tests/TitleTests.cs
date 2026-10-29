@@ -108,4 +108,25 @@ public sealed class TitleTests : IAsyncLifetime
         // The rank is the role's public title and adds its _iPowerAdd to titleScore.
         Assert.Equal(4, Service<CharacterService>().TitleOf!(Session(alice)));
     }
+
+    [ClientDataFact]
+    public async Task TitleObjectiveRequiresTheTargetRankAndAcceptsLaterRanks()
+    {
+        await using var alice = await InWorld("Alice");
+        var tasks = Service<TaskService>();
+        async Task<(long Value, long Required)?> Progress(long id) => await Service<GameLoop>().InvokeAsync(() =>
+            Task.FromResult(tasks.SnapshotTarget(Session(alice), [103001, id])));
+
+        Assert.True(tasks.TargetsSupported(100004));
+        Assert.Null(await Progress(999999));
+        Assert.Equal((0L, 1L), await Progress(2));
+        Assert.Equal(0, await Claim(alice));
+        Assert.Equal((0L, 1L), await Progress(2));
+        await Gm(alice, "!lvl 99");
+        await SetBestPower(alice, 1_000_000);
+        Assert.Equal(0, await Claim(alice));
+        Assert.Equal((1L, 1L), await Progress(2));
+        Assert.Equal(0, await Claim(alice));
+        Assert.Equal((1L, 1L), await Progress(2));
+    }
 }

@@ -45,3 +45,7 @@ Projectiles of monster, boss and pet skills (they only get the corrected `ShowPo
 ## Tests
 
 `SkillVisualTests` checks the selection rules on a trimmed copy of the real rows (Fire Bolt, Lightning Bolt, Fire Ball, a timeline with `m_kClientPoints`, a range without a hit effect), `HitSplit` and `FlightMs`. It needs no exported game data.
+
+Piercing Shadow's normal row (`wudizhan`, 15326) carries two equal damage ratios whose sum matches its stated total: level 1 is 110% + 110% = 220%, level 5 is 150% + 150% = 300%. The server sends the total with `_kShowDmg[0] = 8` display splits. The separate shadow attack of its mode-1 row and its ASPD formula are not implemented by this change.
+
+Soul Strike (12008) displays five hits of one total. Its second ratio and flat damage apply to an Undead-element target (`EleConfig` 10), as the Chinese description states; the damage branch is selected for monsters, players and card-triggered casts.

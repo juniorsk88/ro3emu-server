@@ -3,6 +3,51 @@
 One entry per sprite/visual improvement, NPC change and bug fix: what the player saw, the cause, how it was fixed, where, and
 how it is checked. Newest first. Add the entry in the same task as the change.
 
+## 2026-10-29: socketed card effects and player damage (local)
+
+- Eddga's Endure prevents actual knockback and rejects Knock-Up buffs; hitstun still needs verification. `CardRulesTests.EddgaStopsActualKnockbackWhileEquipped` and `ImmunityEndureAndNextHitAfterACritCardsWork` exercise both paths.
+- Orc Lady, Kobold Leader, Crab, Shellfish and Aster family-damage cards now use the configured bonus at every star level. `FamilyDoubleAttackNullifyElementAndCooldownResetCardsWork` checks all four tiers against matching and unrelated monsters. Family membership still relies on inferred English names.
+- Dark Priest now applies its configured chance, current-SP reduction, limit and cooldown on player hits; chance stacks between cards. `DarkPriestStacksItsChanceAndDrainsPlayerSpWithCooldown` covers stacking and cooldown. Monster SP drain is still unsupported.
+- Reflect cards 1460201 and 1460301 retain their base reflection when the additional reflection from VIT reaches its configured cap. `ReflectCardsCapOnlyTheExtraVitBonus` checks magic and physical hits with the actual equipped cards.
+- PvP damage now includes skill-element damage bonuses and resistance from equipped cards; guardian elemental bonuses use the shared stat calculation once. `SocketedCardResistsFireDamageInPlayerCombat` and `PlayerCombatUsesSkillElementBonusesAndCardResistances` cover the card and calculation.
+- Maya Purple's monster-only detection and the special Sightless Mind stun/bleed effect remain open; neither is claimed as complete.
+
+## 2026-10-29: further card investigation (local, after the initial release candidate)
+
+- Dark Priest also reduces a monster's current SP, starting from the maximum SP the server already sends in its entity; the updated value is published to viewers. `DarkPriestDrainsAndPublishesMonsterSpWithConfiguredCap` checks the configured cap, cooldown and entity snapshot. The monster AI does not yet spend SP on skills; no such cost or regeneration rule is assumed.
+- Sightless Mind uses the configured stun and Bleeding chances on player targets; the special card 1460401 guarantees the stun on monsters and players while retaining Bleeding chance and duration/resistance handling. `SpecialSightlessMindCardGuaranteesOnlyItsStun` checks the normal and special cards and unrelated buffs; `SpecialSightlessCardStunsMonsterWhenCast` checks an actual cast, and `SpecialSightlessCardAppliesGuaranteedStunInPlayerCombat` checks the player-hit callback. A real-client PvP fight has not been checked.
+
+## 2026-10-28: Tavern directory and skill damage
+
+- Guardian damage attributes already enter the character stat sheet; do not apply the same pet buff again to player hits. The Wildcat charge remains limited to its owner's attacks.
+- The normal Goblin Leader and Golden Thief Bug cards use their own BuffConfig groups (20533 and 20511); apply the family damage and magic nullification like their shadow variants.
+- Monster Hunt's map reward request 83621 now pays the configured prize once after its score and access requirements are met; the reward and claimed marker commit together. Quest targets for claimed maps and one area award use persisted Hunt state.
+- The title objective checks the claimed title's configured rank rather than remaining unsupported; unknown title ids stay invalid.
+- Tavern's `PartyService` search (type 4) no longer returns team summaries. The room list stays empty until rooms are implemented; `SocialExtraTests.FortyMemberDirectoryApplicationAndSlotFlow` covers both directory types.
+- Holy Cross uses its second damage pair when the caster equips a two-handed Knight Spear (ItemConfig subtype 5); the client skill description names the bonus. The same choice applies to monster hits, PvP and autocasts.
+- Soul Expansion 1 and its copy use both damage ratios, like Soul Expansion: their descriptions name two notes, each dealing the listed ratio. The server still combines those notes into one hit; ricochets remain unimplemented.
+- Shield Press, Shield Spell, Earth Drive, Smite 2/3 and Protection Attack variants use their explicitly configured monster damage pair for monster hits; PvP keeps the first pair.
+
+## 2026-10-27/28: skills, combat locks, damage attributes and cards (server + admin panel)
+
+Deployed in steps on 27-28 Oct (rollbacks `Ro3Emu.Server.dll.prev-<ts>-<tag>` next to the DLL; panel backup `backup-20261028-014922-cardfx`).
+
+| What the player saw | Cause and fix | Where / switch |
+|---|---|---|
+| Cast time ignored DEX | The client tooltip divides the variable chant by `1 - sqrt(ChantSpeed/600)` (DEX gives 2 ChantSpeed each); the server used the raw chant. Now only the variable part shrinks | `CombatService.Visuals.cs` (`ChantFor`), `Ro3Emu__ChantSpeedReduction=false` restores raw |
+| Refine Resonance panel dropped to level 0 after equip/unequip | The client overwrites its resonance levels from `EquipItemOprResp`, which the server sent as 0 | `CharacterService.Equipment.cs`, test `RefineResonanceTests` |
+| Skill points per class could not be spent on other classes | One pool: what is left in any rank pays for any skill of the tree, every tab shows the whole pool | `SkillService.SkillPoints`, `Ro3Emu__SharedSkillPoints=false` = one pool per rank |
+| "Basic Attack" showed a pending "(+1)" with no Confirm, then +/- buttons | The client picks the shown basic attack by the weapon in hand (JobAttackConfig: the 2300 line swings 1000001 bare-handed, 1299901 with a mace; JobConfig names 1200001, which SkillConfig lacks). The plan listed only one. Every normal-attack group of the career chain is now level 1 | `SkillService.NormalGroups`, tests `ANormalAttackRowMissing...`, `ANormalAttackCanBePlacedOnTheBar` |
+| Normal attack could not go on the hotbar | The load rule refused normal groups; now allowed | `SkillService.LoadAsync` |
+| "Skills locked: combat" blocked skills, builds, stat points | The client locks while the server reports the Battling state (status bit 16). Players are no longer reported as battling | `CombatService.FightingAsync`, `Ro3Emu__CombatLocks=true` restores; GM `!combatlock on/off` |
+| 3 s wait between Preset 1-5 switches | `PublicParamConfig.SchemeCD` | `Ro3Emu__PresetSwitchCooldown` (default 0), GM `!presetcd <s>` |
+| Cards, gear and resonance with Damage Bonus% did nothing | The damage formula only knew ATK/MATK. Outgoing bonuses 209/211/213/215/225/227/229/231/250/252 now scale the player's hit (additive, crit by (15000+209)/15000), incoming reductions 210/212/214/216/232 cut monster hits (cap 90%), Healing Done/Taken 207/208 scale heals. Combination rule inferred | `CombatService.Visuals.cs`, `Ro3Emu__DamageBonusAttributes=false` |
+| Many cards did nothing | `CardEffects`: family damage (Orcs, Kobolds, Goblins, Kara Crabs, Shellfish, Aster; family read from the monster name, inferred), Double Attack, magic nullify, armor element, cooldown reset (the client gets the CD update) | `CardEffects.cs`, test `FamilyDoubleAttackNullifyElementAndCooldownResetCardsWork` |
+| Admin panel card pages lacked the special effect text | Each level now lists the in-game "Atrib. Carta" text (BuffConfig/SpecialEffectConfig descriptions, pt-BR templates by text id) | `admin/card_fx.py`, `items_api.py`, `assets/itens.js` |
+| Diagnostics | `Ro3Emu:DamageTrace` logs each player skill hit (Matk, target level/Mdef/element, raw, final); keep off unless investigating | `Ro3Emu__DamageTrace=true` |
+
+Not done yet: Splash cards, reflect, status immunities, Endure, autocast cards (Bash, Jupitel Thunder, Divine Light), reveal-hidden, "next hit after a crit", skill-only Enchant recipes (28 rows with `_iSkills` and no `_iEnchantIDs` still return FeatureUnavailable; the other 164 recipes work).
+
 ## 2026-10-25: story task stuck in its cutscene ("Strange Occurences", the pendant falls)
 
 **Symptom:** on the main task "Strange Occurences" (10105050, plot 130061) the client hangs when the pendant falls to the ground. The server finishes a cutscene task only when the client reports the cutscene's end (84011), which never comes; the player closes the game and the cutscene starts again at the next login (arcus_e_flecha, 25 Oct 19:53-20:00 UTC: three relogins at the same spot, task never delivered).

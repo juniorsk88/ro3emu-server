@@ -145,6 +145,19 @@ public sealed partial class CombatService
         return life <= threshold ? 1 : 0;
     }
 
+    // Holy Cross: SkillConfig's second damage pair is used with a two-handed Knight Spear (ItemConfig subtype 5).
+    internal int HolyCrossBranch(GameSession s, JsonElement row) =>
+        new SkillConfig(row).ScriptLogic == "HolyCross" && SkillParameterRules.Wields(s, _data, 5) ? 1 : 0;
+
+    // These SkillConfig descriptions explicitly give a higher damage multiplier against monsters.
+    internal static int MonsterBonusBranch(JsonElement row) => new SkillConfig(row).ScriptLogic is
+        "ShieldPress" or "ShieldPresss1" or "ShieldSpell" or "EarthDrive" or "Smite3" or "Smite2"
+        or "ProtectionAttack" or "ProtectionAttack2" ? 1 : 0;
+
+    // Soul Strike's description specifies the extra damage against Undead element (EleConfig 10), not race.
+    internal static int SoulStrikeBranch(JsonElement row, int element) =>
+        new SkillConfig(row).SkillId == 12008 && element == 10 ? 1 : 0;
+
     /// <summary>A passive row's own BuffConfig row (<see cref="OwnBuffs"/>), or null.</summary>
     internal BuffConfig? OwnBuff(SkillConfig skill) =>
         OwnBuffs.TryGetValue((int)skill.SkillId, out int prefix) ? BuffConfig.Get(_data, prefix * 100L + skill.Level) : null;

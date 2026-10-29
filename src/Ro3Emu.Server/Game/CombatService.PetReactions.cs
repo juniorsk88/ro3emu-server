@@ -10,13 +10,24 @@ public sealed partial class CombatService
     private static bool RaisesDamage(long attribute, int element) => attribute == AttributeId.PerDmg1
         || element is >= 1 and <= AttributeId.ElementCount && attribute == AttributeId.NoneEle + element - 1;
 
-    private static long GuardianOutgoingDamage(GameSession source, JsonElement row, long damage)
+    private long GuardianOutgoingDamage(GameSession source, JsonElement row, long damage)
     {
+        if (options.Value.DamageBonusAttributes) return damage;
         int element = (int)Math.Clamp(GameData.Int(row, "_iEleType"), 1, AttributeId.ElementCount);
         double bonus = source.Buffs.Where(b => b.IsGuardianOwned && b.ExpireMs > Now
                 && (b.ConfigId / 100 != GuardianGroup.WildcatCharge || !IsGuardianEffect(row) && !row.TryGetProperty("_ro3GuardianFixedHit", out _)))
-            .SelectMany(b => b.Changes).Where(c => RaisesDamage(c.Attr, element)).Sum(c => c.Value);
+            .SelectMany(b => b.Changes).Where(c => RaisesDamage(c.Attr, element)
+                && (!options.Value.DamageBonusAttributes || c.Attr != AttributeId.PerDmg1)).Sum(c => c.Value);
         return damage <= 0 ? 0 : (long)Math.Clamp(Math.Floor(damage * Math.Max(0, 1 + bonus / 10000)), 0, long.MaxValue);
+    }
+
+    // The Wildcat charge applies to the owner's hits, not a guardian's own effects.
+    internal static long DamageAttribute(GameSession source, JsonElement row, StatSheet stats, int id)
+    {
+        if (id != AttributeId.PerDmg1 || !IsGuardianEffect(row) && !row.TryGetProperty("_ro3GuardianFixedHit", out _)) return stats[id];
+        double excluded = source.Buffs.Where(b => b.IsGuardianOwned && b.ExpireMs > Now && b.ConfigId / 100 == GuardianGroup.WildcatCharge)
+            .SelectMany(b => b.Changes).Where(c => c.Attr == id).Sum(c => c.Value);
+        return stats[id] - (long)Math.Round(excluded);
     }
 
     /// <summary>PetStarConfig._iPassiveMain + its localized description. (inferred) One reaction after the primary

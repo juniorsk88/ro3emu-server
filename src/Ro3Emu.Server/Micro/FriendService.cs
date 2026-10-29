@@ -294,6 +294,7 @@ public sealed class NameService(RoleStore roles) : IMicroService
 /// </summary>
 public sealed class PartyService(TeamService teams, FriendStore friends, SessionRegistry sessions, RoleStore roles, GameLoop loop) : IMicroService
 {
+    private const int BarroomPartyType = 4; // LC_BarRoomServer.PartyQuerySummaryRequest
     public string Name => "PartyService";
 
     public async ValueTask<object?> InvokeAsync(MicroSession session, string method, object? args)
@@ -335,7 +336,8 @@ public sealed class PartyService(TeamService teams, FriendStore friends, Session
         return new Dictionary<string, object?>
         {
             ["Ret"] = MicroServiceRouter.Ret(true),
-            ["SummaryList"] = teams.Directory(target, area, playBook, map, offset, limit),
+            ["SummaryList"] = list.Length > 0 && Number(list[0]) == BarroomPartyType
+                ? Array.Empty<object>() : teams.Directory(target, area, playBook, map, offset, limit),
         };
     }
 

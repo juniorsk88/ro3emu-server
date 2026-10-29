@@ -39,6 +39,8 @@ public sealed class MonsterUnit : WorldUnit
     public required SpawnGroup Group { get; init; }
     public required SpawnPoint Home { get; init; }
     public long Hp { get; set; }
+    private long? _sp;
+    public long Sp { get => Math.Clamp(_sp ?? Template.MaxSp, 0, Math.Max(0, Template.MaxSp)); set => _sp = Math.Clamp(value, 0, Math.Max(0, Template.MaxSp)); }
     public bool Dead { get; set; }
     /// <summary>Scene script presentation camp; null uses the NPCConfig template camp.</summary>
     public int? CampOverride { get; set; }
@@ -152,7 +154,7 @@ public sealed class MonsterUnit : WorldUnit
         foreach (var (idx, value) in new (long, long)[]
                  {
                      (101, Template.MaxHp), (2000, Dead ? 0 : Hp), (2002, Template.Level), (113, SpeedCm(now)),
-                     (102, Template.MaxSp), (2001, Template.MaxSp),
+                     (102, Template.MaxSp), (2001, Sp),
                  })
             entity.Property.Add(new AoIProperty { Idx = idx, Data = value, BaseData = value });
         if (CustomData.Count > 0) entity.CustomDatas.Add(CustomData.Select(c => c.Clone()));

@@ -27,9 +27,8 @@ namespace Ro3Emu.Server.Game;
 /// - SP absorb 2050401: _kLogicData [chance bp, ...], desc[1]% of the damage as SP.
 /// - size: 20501 (2050101..) adds _kLogicData[0] bp of damage against Small/Medium/Large (NPCConfig._iSize 1..3)
 ///   monsters; 20500 (2050001..) adds _kLogicData[1] bp with a _kLogicData[0] bp chance.
-/// Not executed (no machinery or no data link): autocast skills (Bash, Jupitel Thunder, Divine Light), race-family
-/// damage (Orcs, Kobolds, ...: no monster family field), armor element changes, magic nullify/reflect, status
-/// immunities, Endure, cooldown reset, monster SP drain, Splash, Double Attack, detection, indestructible gear.
+/// The remaining gaps include hidden-monster detection, gear destruction and Endure's hitstun. Monster skill SP spending is not implemented.
+/// Family damage relies on names because no family field was found.
 /// Skill(3) grants (Heal, Disguise, Magnum Break, Envenom, Sight, Sightless Mind) go into RoleProgress.GrantedSkills.
 /// </summary>
 public sealed class CardEffects
@@ -51,8 +50,8 @@ public sealed class CardEffects
     private sealed record Passive(InvItem Card, int Id, JsonElement Row);
 
     private const long SkillOp = 3;
-    private const int LifeStealGroup = 20170, SpAbsorb = 2050401, SizeAlways = 20501, SizeChance = 20500;
-    private const int DoubleAttack = 20210, CooldownReset = 20529, MagicNullify = 20510;
+    private const int LifeStealGroup = 20170, SpDrainGroup = 20230, SpAbsorb = 2050401, SizeAlways = 20501, SizeChance = 20500;
+    private const int DoubleAttack = 20210, CooldownReset = 20529, MagicNullify = 20510, MagicNullifyNormal = 20511;
     private const int SplashChance = 20508, SplashAlways = 20509, NextHitAfterCrit = 20507, ImmuneSlow = 20525, ImmuneStun = 20527, Endure = 20523;
     private const int Phen = 20240, Ladybug = 20260, Angeling = 20514, AngelingHolyArmorBuff = 904407, // BuffConfig "Convert Armor to Holy Property", Angeling's _kLogicData[1]
          SilenceBuffGroup = 9023;
@@ -78,6 +77,7 @@ public sealed class CardEffects
         [20280] = n => n.Contains("Shellfish"),
         [20290] = n => n == "Aster",
         [20532] = n => n.Contains("Goblin"),
+        [20533] = n => n.Contains("Goblin"),
     };
 
     private readonly System.Collections.Concurrent.ConcurrentDictionary<int, string> monsterNames = new();
@@ -116,6 +116,8 @@ public sealed class CardEffects
         combat.IncomingHitNegators.Add(NegateMagicHit);
         combat.ArmorElementOf = ArmorElement;
         combat.CastIgnoresControl = s => Passives(s).Any(p => GameData.Int(p.Row, "_iBuffID") == Phen);
+        combat.CardGuaranteesHostileBuff = (s, row, buff) => new SkillConfig(row).Id == 2004501
+            && buff / 100 == BuffService.StunGroup && Passives(s).Any(p => new BuffConfig(p.Row).BuffId == 20535);
         combat.IncomingDamageAdjusters.Add(LessWhileSilencedAsync);
         combat.TakenAsync.Add(OnTakenAsync);
     }
@@ -245,6 +247,13 @@ public sealed class CardEffects
                 var stats = _character.Stats(s);
                 await _character.SetHpSpAsync(s, stats[2000] + heal, null);
             }
+            else if (group == SpDrainGroup)
+            {
+                if (desc.Length < 4 || Roll(10000) >= chance || !Ready(s, group, (long)(desc[3] * 1000))) continue;
+                long sp = target.Sp;
+                long drain = Math.Min((long)desc[2], (long)Math.Floor(sp * desc[1] / 100));
+                if (drain > 0) await combat.SetMonsterSpAsync(target, sp - drain);
+            }
             else if (logic.Length == 3 && logic[0] == 0 && logic[2] > 0 && _data.Row("BuffConfig", logic[1]) is not null)
             {
                 // "has a @{1}% Chance to inflict a status for @{2} sec. Internal Cooldown: @{3} sec."
@@ -292,7 +301,15 @@ public sealed class CardEffects
             else if (sized && group == SizeChance && logic.Length >= 2 && Roll(10000) < logic[0]) bonus += logic[1];
             else if (group == NextHitAfterCrit && result == DamageHitResult.Critical && logic.Length >= 2 && Description(passive.Row) is { Length: >= 1 } crit)
                 lock (state) { state.NextHitUntil = now + logic[1]; state.NextHitBp = (long)(crit[0] * 100); }
-            else if (RaceGroups.TryGetValue(group, out var belongs) && logic.Length >= 1 && belongs(name ??= MonsterName(target.Template.NpcId))) bonus += logic[0];
+            else if (RaceGroups.TryGetValue(group switch
+                     {
+                         >= 20150 and <= 20153 => 20150,
+                         >= 20220 and <= 20223 => 20220,
+                         >= 20270 and <= 20273 => 20270,
+                         >= 20280 and <= 20283 => 20280,
+                         >= 20290 and <= 20293 => 20290,
+                         _ => group,
+                     }, out var belongs) && logic.Length >= 1 && belongs(name ??= MonsterName(target.Template.NpcId))) bonus += logic[0];
         }
         return bonus <= 0 ? damage : damage + (long)Math.Floor(damage * bonus / 10000d);
     }
@@ -372,8 +389,31 @@ public sealed class CardEffects
     /// <summary>"When hit by a player's ST magic/Physical skill, reflects @{1}% of the damage taken, up to @{2}% of the attacker's Max Life. (For
     /// every @{3} VIT, reflects an Extra @{4}% ..., up to @{5}%.) Internal Cooldown: seconds." (groups 20512/20513 magic, 20516/20517 physical;
     /// single-target skills only). _kDescData is [pct, cap%, cd] or [pct, cap%, vit step, extra pct, extra cap%, cd].</summary>
-    private async Task OnPvpHitTakenAsync(GameSession attacker, GameSession target, JsonElement row, long damage)
+    internal async Task OnPvpHitTakenAsync(GameSession attacker, GameSession target, JsonElement row, long damage)
     {
+        if (damage > 0 && attacker.Role != null && target.Role != null)
+        {
+            if (new SkillConfig(row) is { Id: 2004501 } skill && _character.Stats(target)[2000] > 0)
+            {
+                var attackerRole = attacker.Role;
+                var targetRole = target.Role;
+                long scene = attacker.WorldScene;
+                foreach (var tuple in skill.Buff2)
+                {
+                    if (!ReferenceEquals(attacker.Role, attackerRole) || !ReferenceEquals(target.Role, targetRole)
+                        || attacker.SceneLoading || target.SceneLoading || attacker.WorldScene != scene || target.WorldScene != scene) break;
+                    if (combat.RollHostileBuff(JsonSerializer.SerializeToElement(tuple), attacker, null, target, null, out int id, out int duration, row))
+                        await _buffs.AddAsync(target, id, duration, attackerRole.Id);
+                }
+            }
+            foreach (var (_, group, chance, desc) in Procs(Passives(attacker).ToList()))
+            {
+                if (group != SpDrainGroup || desc.Length < 4 || Roll(10000) >= chance || !Ready(attacker, group, (long)(desc[3] * 1000))) continue;
+                long sp = _character.Stats(target)[2001];
+                long drain = Math.Min((long)desc[2], (long)Math.Floor(sp * desc[1] / 100));
+                if (drain > 0) await _character.SetHpSpAsync(target, null, sp - drain);
+            }
+        }
         if (damage <= 0 || target.Role == null || GameData.Int(row, "_iRangeType") == 2) return;
         bool magic = GameData.Int(row, "_iDmgType") == 2;
         foreach (var passive in Passives(target).DistinctBy(p => (p.Card.Guid, p.Id)).ToList())
@@ -387,7 +427,7 @@ public sealed class CardEffects
             if (withVit && desc[2] > 0)
             {
                 long vit = _character.Stats(target)[3]; // VIT
-                percent = Math.Min(desc[4], percent + Math.Floor(vit / desc[2]) * desc[3]); // the extra reflect share, up to desc[4]%
+                percent += Math.Min(desc[4], Math.Floor(vit / desc[2]) * desc[3]); // the extra reflect share, up to desc[4]%
             }
             if (!Ready(target, group, cooldown)) continue;
             long maxHp = _character.Stats(attacker)[101];
@@ -397,10 +437,10 @@ public sealed class CardEffects
         }
     }
 
-    /// <summary>Immune to Slow / Immune to Stun / Endure (immune to knockback): the card refuses those buffs from other sources.</summary>
+    /// <summary>Immune to Slow / Stun / Endure: the card refuses the corresponding buffs from other sources.</summary>
     private bool RefusesBuff(GameSession s, int group)
     {
-        bool stun = Named("Stun", group), slow = Named("Slow", group), knock = Named("Knockback", group);
+        bool stun = Named("Stun", group), slow = Named("Slow", group), knock = Named("Knockback", group) || group == BuffService.KnockUpGroup;
         if (!stun && !slow && !knock) return false;
         foreach (var passive in Passives(s))
         {
@@ -454,7 +494,7 @@ public sealed class CardEffects
     internal bool NegateMagicHit(GameSession s, bool magic)
     {
         if (!magic || s.Role == null) return false;
-        foreach (var passive in Passives(s).Where(p => GameData.Int(p.Row, "_iBuffID") == MagicNullify).DistinctBy(p => (p.Card.Guid, p.Id)))
+        foreach (var passive in Passives(s).Where(p => GameData.Int(p.Row, "_iBuffID") is MagicNullify or MagicNullifyNormal).DistinctBy(p => (p.Card.Guid, p.Id)))
         {
             var logic = Numbers(passive.Row, "_kLogicData");
             var desc = Description(passive.Row);

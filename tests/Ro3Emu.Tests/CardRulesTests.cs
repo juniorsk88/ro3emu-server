@@ -15,6 +15,8 @@ public sealed class CardRulesTests : IAsyncLifetime
 {
     private const int Lunatic = 1420100, Dagger = 2010121;
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(5);
+    private sealed class HighProcRolls : CombatRolls { public override int Proc(int max) => max - 1; }
+    private sealed class LowProcRolls : CombatRolls { public override int Proc(int max) => 0; }
     private readonly string _dataDir = Path.Combine(Path.GetTempPath(), "ro3emu-card-rules-" + Guid.NewGuid().ToString("N"));
     private WebApplication _app = null!;
     private string _httpUrl = "";
@@ -349,6 +351,28 @@ public sealed class CardRulesTests : IAsyncLifetime
                 await effects.RefreshAsync(session);
                 Assert.Equal(10180, effects.AdjustDamage(session, orc, normal, DamageHitResult.Normal, 10000)); // all Orcs +1.8%
                 Assert.Equal(10000, effects.AdjustDamage(session, other, normal, DamageHitResult.Normal, 10000));
+                var families = new[]
+                {
+                    (1430108, orc, new[] { 180, 320, 460, 600 }),
+                    (1440111, Unit("Axe Kobold", (1L << 48) + 2), new[] { 360, 540, 720, 900 }),
+                    (1430124, Unit("Crab", (1L << 48) + 3), new[] { 180, 320, 460, 600 }),
+                    (1430125, Unit("Shellfish", (1L << 48) + 4), new[] { 180, 320, 460, 600 }),
+                    (1430126, Unit("Aster", (1L << 48) + 5), new[] { 180, 320, 460, 600 }),
+                };
+                var familyCard = session.Items.Single(i => i.Entry == orcs);
+                foreach (var (card, monster, bonuses) in families)
+                {
+                    familyCard.Entry = card;
+                    for (int tier = 0; tier < bonuses.Length; tier++)
+                    {
+                        familyCard.Attrs ??= new();
+                        familyCard.Attrs[502] = tier;
+                        Assert.Equal(10000 + bonuses[tier], effects.AdjustDamage(session, monster, normal, DamageHitResult.Normal, 10000));
+                        Assert.Equal(10000, effects.AdjustDamage(session, other, normal, DamageHitResult.Normal, 10000));
+                    }
+                }
+                familyCard.Entry = orcs;
+                familyCard.Attrs![502] = 0;
                 Assert.Equal(500, effects.ExtraHit(session, orc, normal, 1000)); // Double Attack: 50% of the hit
                 Assert.Equal(0, effects.ExtraHit(session, orc, normal, 1000)); // its internal cooldown
                 Assert.Equal(4, effects.ArmorElement(session)); // Fire
@@ -365,6 +389,231 @@ public sealed class CardRulesTests : IAsyncLifetime
             });
         }
         finally { effects.Roll = bound => Random.Shared.Next(bound); }
+    }
+
+    [ClientDataFact]
+    public async Task NormalGoblinLeaderAndGoldenThiefBugCardsApplyTheirEffects()
+    {
+        await using var alice = await InWorld("Alice");
+        var session = Session("Alice");
+        var data = Service<GameData>();
+        var effects = Service<CardEffects>();
+        int npc = (int)data.Table("NPCConfig").Values.Where(r => GameData.Int(r, "_iNPCType") == 1
+                && data.TextOf(r, "_kName").Contains("Goblin"))
+            .Select(r => GameData.Int(r, "_iID")).First(id => Service<MonsterService>().Template((int)id) != null);
+        var template = Service<MonsterService>().Template(npc)!;
+        var point = new SpawnPoint(-1, 0, 0, 0, 0, npc);
+        var monster = new MonsterUnit
+        {
+            Uid = 1L << 49, SceneEntry = session.SceneEntry, Template = template, Hp = template.MaxHp,
+            Group = new SpawnGroup(-1, false, 1, 0, [], [point]), Home = point,
+        };
+        var normal = data.Row("SkillConfig", 1000001)!.Value;
+        effects.Roll = _ => 0;
+        try
+        {
+            await Service<GameLoop>().InvokeAsync(async () =>
+            {
+                session.Items.Add(new InvItem { Guid = 881001, Entry = 1460105, Stack = 1, Pack = 3, Grid = CharacterService.CardGrid(1, 1) });
+                session.Items.Add(new InvItem { Guid = 881002, Entry = 1460200, Stack = 1, Pack = 3, Grid = CharacterService.CardGrid(2, 1) });
+                await effects.RefreshAsync(session);
+                Assert.Equal(11000, effects.AdjustDamage(session, monster, normal, DamageHitResult.Normal, 10000));
+                Assert.False(effects.NegateMagicHit(session, false));
+                Assert.True(effects.NegateMagicHit(session, true));
+                Assert.False(effects.NegateMagicHit(session, true));
+            });
+        }
+        finally { effects.Roll = bound => Random.Shared.Next(bound); }
+    }
+
+    [ClientDataFact]
+    public async Task SpecialSightlessMindCardGuaranteesOnlyItsStun()
+    {
+        await using var alice = await InWorld("Alice");
+        var session = Session("Alice");
+        var combat = Service<CombatService>();
+        var skill = Service<GameData>().Row("SkillConfig", 2004501)!.Value;
+        var tuples = skill.GetProperty("_kBuff2").EnumerateArray().ToArray();
+        var stun = tuples.Single(t => t[0].GetInt32() == 901601);
+        var bleed = tuples.Single(t => t[0].GetInt32() == 902501);
+        combat.Rolls = new HighProcRolls();
+        await Service<GameLoop>().InvokeAsync(() =>
+        {
+            var card = new InvItem { Guid = 881105, Entry = 1450401, Stack = 1, Pack = 3, Grid = CharacterService.CardGrid(1, 1) };
+            session.Items.Add(card);
+            bool Lands(System.Text.Json.JsonElement tuple, System.Text.Json.JsonElement row) =>
+                combat.RollHostileBuff(tuple, session, null, null, null, out _, out _, row);
+            Assert.False(Lands(stun, skill));
+            card.Entry = 1460401;
+            Assert.True(Lands(stun, skill));
+            Assert.False(Lands(bleed, skill));
+            Assert.False(Lands(stun, Service<GameData>().Row("SkillConfig", 1000001)!.Value));
+            session.Items.Remove(card);
+            Assert.False(Lands(stun, skill));
+            return Task.CompletedTask;
+        });
+    }
+
+    [ClientDataFact]
+    public async Task SpecialSightlessCardAppliesGuaranteedStunInPlayerCombat()
+    {
+        await using var alice = await InWorld("Alice");
+        await using var bob = await InWorld("Bob");
+        var attacker = Session("Alice");
+        var target = Session("Bob");
+        var combat = Service<CombatService>();
+        var effects = Service<CardEffects>();
+        var skill = Service<GameData>().Row("SkillConfig", 2004501)!.Value;
+        combat.Rolls = new HighProcRolls();
+        await Service<GameLoop>().InvokeAsync(async () =>
+        {
+            var card = new InvItem { Guid = 881108, Entry = 1450401, Stack = 1, Pack = 3, Grid = CharacterService.CardGrid(1, 1) };
+            attacker.Items.Add(card);
+            await effects.OnPvpHitTakenAsync(attacker, target, skill, 100);
+            Assert.DoesNotContain(target.Buffs, b => b.ConfigId == 901601);
+            card.Entry = 1460401;
+            await effects.OnPvpHitTakenAsync(attacker, target, skill, 100);
+            Assert.Contains(target.Buffs, b => b.ConfigId == 901601);
+            Assert.DoesNotContain(target.Buffs, b => b.ConfigId == 902501);
+            foreach (var buff in target.Buffs.Where(b => b.ConfigId is 901601 or 902501).ToArray())
+                await Service<BuffService>().RemoveAsync(target, buff);
+            card.Entry = 1450401;
+            combat.Rolls = new LowProcRolls();
+            await effects.OnPvpHitTakenAsync(attacker, target, skill, 100);
+            Assert.Contains(target.Buffs, b => b.ConfigId == 901601);
+            Assert.Contains(target.Buffs, b => b.ConfigId == 902501);
+        });
+    }
+
+    [ClientDataFact]
+    public async Task ReflectCardsCapOnlyTheExtraVitBonus()
+    {
+        await using var alice = await InWorld("Alice");
+        await using var bob = await InWorld("Bob");
+        var attacker = Session("Alice");
+        var defender = Session("Bob");
+        await Service<GameLoop>().InvokeAsync(async () =>
+        {
+            attacker.Progress!.Stats[2] = 700;
+            defender.Progress!.Stats[2] = 700;
+            var stats = Service<CharacterService>();
+            Assert.True(stats.Stats(attacker)[101] >= 300);
+            var card = new InvItem { Guid = 881104, Entry = 1460201, Stack = 1, Pack = 3, Grid = CharacterService.CardGrid(1, 1) };
+            defender.Items.Add(card);
+            foreach (var (entry, magic) in new[] { (1460201, 2), (1460301, 1) })
+            {
+                card.Entry = entry;
+                attacker.CurrentHp = stats.Stats(attacker)[101];
+                long before = stats.Stats(attacker)[2000];
+                var skill = System.Text.Json.JsonSerializer.SerializeToElement(new { _iRangeType = 1, _iDmgType = magic });
+                await Service<CardEffects>().OnPvpHitTakenAsync(attacker, defender, skill, 100);
+                Assert.Equal(before - 92, stats.Stats(attacker)[2000]); // 32% base + 60% extra, capped separately
+            }
+        });
+    }
+
+    [ClientDataFact]
+    public async Task DarkPriestDrainsAndPublishesMonsterSpWithConfiguredCap()
+    {
+        await using var alice = await InWorld("Alice");
+        var session = Session("Alice");
+        var data = Service<GameData>();
+        var effects = Service<CardEffects>();
+        var template = Service<MonsterService>().Template(5000001)! with { MaxSp = 3000 };
+        var point = new SpawnPoint(-1, 0, 0, 0, 0, template.NpcId);
+        var monster = new MonsterUnit
+        {
+            Uid = 1L << 50, SceneEntry = session.SceneEntry, Template = template, Hp = template.MaxHp,
+            Group = new SpawnGroup(-1, false, 1, 0, [], [point]), Home = point,
+        };
+        var row = data.Row("SkillConfig", 1000001)!.Value;
+        effects.Roll = _ => 0;
+        try
+        {
+            await Service<GameLoop>().InvokeAsync(async () =>
+            {
+                session.Items.Add(new InvItem { Guid = 881106, Entry = 1440112, Stack = 1, Pack = 3, Grid = CharacterService.CardGrid(1, 1) });
+                Assert.Equal(3000, monster.Entity().Property.Single(p => p.Idx == 2001).Data);
+                await effects.OnDealtAsync(session, monster, row, 100);
+                Assert.Equal(2600, monster.Sp); // 20% of 3000, capped at 400
+                Assert.Equal(2600, monster.Entity().Property.Single(p => p.Idx == 2001).Data);
+                await effects.OnDealtAsync(session, monster, row, 100);
+                Assert.Equal(2600, monster.Sp); // 15-second cooldown
+            });
+        }
+        finally { effects.Roll = bound => Random.Shared.Next(bound); }
+    }
+
+    [ClientDataFact]
+    public async Task DarkPriestStacksItsChanceAndDrainsPlayerSpWithCooldown()
+    {
+        await using var alice = await InWorld("Alice");
+        await using var bob = await InWorld("Bob");
+        var source = Session("Alice");
+        var target = Session("Bob");
+        var effects = Service<CardEffects>();
+        var row = Service<GameData>().Row("SkillConfig", 1000001)!.Value;
+        effects.Roll = _ => 1000; // one card has 8%, two cards have 16%
+        try
+        {
+            await Service<GameLoop>().InvokeAsync(async () =>
+            {
+                source.Items.Add(new InvItem { Guid = 881102, Entry = 1440112, Stack = 1, Pack = 3, Grid = CharacterService.CardGrid(1, 1) });
+                long sp = Service<CharacterService>().Stats(target)[2001];
+                Assert.True(sp >= 5);
+                await effects.OnPvpHitTakenAsync(source, target, row, 100);
+                Assert.Equal(sp, Service<CharacterService>().Stats(target)[2001]);
+                source.Items.Add(new InvItem { Guid = 881103, Entry = 1440112, Stack = 1, Pack = 3, Grid = CharacterService.CardGrid(2, 1) });
+                await effects.OnPvpHitTakenAsync(source, target, row, 100);
+                long expected = sp - Math.Min(400, (long)Math.Floor(sp * .2));
+                Assert.Equal(expected, Service<CharacterService>().Stats(target)[2001]);
+                await effects.OnPvpHitTakenAsync(source, target, row, 100);
+                Assert.Equal(expected, Service<CharacterService>().Stats(target)[2001]);
+            });
+        }
+        finally { effects.Roll = bound => Random.Shared.Next(bound); }
+    }
+
+    [ClientDataFact]
+    public async Task SocketedCardResistsFireDamageInPlayerCombat()
+    {
+        await using var alice = await InWorld("Alice");
+        var session = Session("Alice");
+        await Service<GameLoop>().InvokeAsync(() =>
+        {
+            var character = Service<CharacterService>();
+            var before = character.Stats(session);
+            session.Items.Add(new InvItem { Guid = 881101, Entry = 1440904, Stack = 1, Pack = 3, Grid = CharacterService.CardGrid(1, 1) });
+            var after = character.Stats(session);
+            Assert.Equal(before[314] + 330, after[314]);
+            long Calculate(StatSheet stats, int element) => CombatService.ApplyDamageReductions(100000, true, true, false, id => stats[id], null, element, pvp: true);
+            Assert.Equal(Calculate(before, 4) - 3300, Calculate(after, 4));
+            Assert.Equal(Calculate(before, 5), Calculate(after, 5));
+            return Task.CompletedTask;
+        });
+    }
+
+    [ClientDataFact]
+    public async Task EddgaStopsActualKnockbackWhileEquipped()
+    {
+        await using var alice = await InWorld("Alice");
+        var session = Session("Alice");
+        var effects = Service<CardEffects>();
+        var combat = Service<CombatService>();
+        await Service<GameLoop>().InvokeAsync(async () =>
+        {
+            var start = session.Position.Clone();
+            var nav = Service<WorldData>().Map(session.SceneEntry)?.Nav;
+            var direction = new[] { (1f, 0f), (-1f, 0f), (0f, 1f), (0f, -1f) }
+                .First(d => nav == null || nav.CanWalk(start.X, start.Y, start.Z, start.X + d.Item1, start.Z + d.Item2));
+            await combat.KnockPlayerAsync(session, start.X - direction.Item1, start.Z - direction.Item2, 1, 1000001, 0, 100);
+            Assert.True(Math.Abs(session.Position.X - start.X) + Math.Abs(session.Position.Z - start.Z) > 0.1f);
+            session.Items.Add(new InvItem { Guid = 881100, Entry = 1460500, Stack = 1, Pack = 3, Grid = CharacterService.CardGrid(1, 1) });
+            await effects.RefreshAsync(session);
+            var protectedPosition = session.Position.Clone();
+            await combat.KnockPlayerAsync(session, protectedPosition.X - direction.Item1, protectedPosition.Z - direction.Item2, 1, 1000001, 0, 100);
+            Assert.Equal(protectedPosition, session.Position);
+        });
     }
 
     [ClientDataFact]
@@ -401,7 +650,8 @@ public sealed class CardRulesTests : IAsyncLifetime
             await buffs.AddAsync(session, StunBuff, 5000, other);
             await buffs.AddAsync(session, SlowBuff, 5000, other);
             await buffs.AddAsync(session, KnockBuff, 5000, other);
-            Assert.DoesNotContain(session.Buffs, b => b.ConfigId == StunBuff || b.ConfigId == SlowBuff || b.ConfigId == KnockBuff);
+            await buffs.AddAsync(session, 901801, 5000, other); // Knock-Up
+            Assert.DoesNotContain(session.Buffs, b => b.ConfigId == StunBuff || b.ConfigId == SlowBuff || b.ConfigId == KnockBuff || b.ConfigId == 901801);
             await buffs.AddAsync(session, StunBuff, 5000, session.Role!.Id); // the role's own buffs are never refused
             Assert.Contains(session.Buffs, b => b.ConfigId == StunBuff);
             // "When you land a critical hit, your next instance of damage is increased by 5%"

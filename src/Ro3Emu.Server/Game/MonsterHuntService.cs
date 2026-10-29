@@ -20,7 +20,7 @@ namespace Ro3Emu.Server.Game;
 /// </summary>
 public sealed class MonsterHuntService
 {
-    public const uint Sync = 5053, GainAreaAward = 83622, GainMonsterAward = 83623;
+    public const uint Sync = 5053, GainMapAward = 83621, GainAreaAward = 83622, GainMonsterAward = 83623;
     public const int Function = 92;
 
     private readonly GameData _data;
@@ -155,6 +155,30 @@ public sealed class MonsterHuntService
 
     // ------------------------------------------------------------------ claims
 
+    /// <summary>83621: claim the configured map award once the map's score reaches its requirement.</summary>
+    public async Task ClaimMapAsync(GameSession s, AreaConcurGainMapAwardReq req)
+    {
+        using (await CharacterService.Lock(s))
+        {
+            var state = s.AreaConcur;
+            var row = _data.Row("AreaConcurMapConfig", req.MapId);
+            if (state != null && row is { } map && Area(GameData.Int(map, "_iArea")) is { } area
+                && AreaOpen(s, area) && _functions.ConditionMet(s, GameData.Int(map, "_iCondition"))
+                && TowerService.FitsPlayBook(map, PlayBook(s) ?? _seasons.PlayBook)
+                && state.MapInfo.TryGetValue(req.MapId, out var info) && !info.IsClaimedAward
+                && GameData.Int(map, "_iMapRequest") is > 0 and var required && info.CurScore >= required
+                && GameData.Int(map, "_iMapAward") is > 0 and var award)
+            {
+                var next = state.Clone();
+                next.MapInfo[req.MapId].IsClaimedAward = true;
+                await CommitClaimAsync(s, next, [award], $"map/{req.MapId}");
+            }
+            await s.SendGameAsync(GainMapAward, new AreaConcurGainMapAwardResp { Req = req });
+        }
+        await SyncAsync(s);
+        await _tasks.RefreshAsync(s);
+    }
+
     private int? PlayBook(GameSession s) => s.Synced.GetValueOrDefault(SeasonService.SeasonSync) is DBSeasonInfo { Current: { } current }
         ? (int)current.PlayBookId : null;
 
@@ -249,6 +273,7 @@ public sealed class MonsterHuntService
             await s.SendGameAsync(GainAreaAward, new AreaConcurGainAreaAwardResp { Req = req });
         }
         await SyncAsync(s);
+        await _tasks.RefreshAsync(s);
     }
 
     /// <summary>The stages' awards and the claimed markers in one owned-award receipt; on any failure nothing changed.</summary>
