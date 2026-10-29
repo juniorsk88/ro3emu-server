@@ -859,9 +859,11 @@ public sealed partial class CombatService
     private static bool AreaDamageRow(JsonElement row) => GameData.Int(row, "_iRangeType") == SkillRelease.Area
         || new SkillConfig(row).SkillId == 15303;
 
+    // Tetra Vortex and its Reading copy affect the circle around the chosen point (SkillConfig 12316/12326).
     private GameSession[] EffectPlayerTargets(GameSession s, ActiveSkillCast action, Vec3 center) =>
         AreaDamageRow(action.Row)
-            ? IsGuardianEffect(action.Row) ? GuardianPlayerTargets(s, action, center) : EventAreaTargets(s, action.Row)
+            ? IsGuardianEffect(action.Row) || new SkillConfig(action.Row).SkillId is 12316 or 12326
+                ? GuardianPlayerTargets(s, action, center) : EventAreaTargets(s, action.Row)
             : EventTarget(s, action.Request.TargetId) is { } eventTarget
                 && PlayerDistance(s, eventTarget) <= Range(action.Row) + 1.5f ? [eventTarget] : [];
 

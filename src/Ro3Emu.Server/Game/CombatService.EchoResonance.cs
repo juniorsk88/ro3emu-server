@@ -14,7 +14,7 @@ public sealed partial class CombatService
             [11130101] = ([11301], 0), // Dragon's Descent: Rift Impact +50
             [11130501] = ([11308], 0), // Pixel Thrust: Phantom Thrust +150 percentage points
             [11130701] = ([11310], 0), // Electro Rock: all forms of Rain of Spears +25
-            [11230701] = ([12316], 0), // Mixed Accompaniment: each Tetra Vortex hit +50
+            [11230701] = ([12316, 12326], 0), // Mixed Accompaniment: Tetra Vortex and its Reading copy +50
             [11230801] = ([12315], 0), // Disco Accent: Comet +200
             [11164101] = ([11628], 1), // Moonlit Echo: Crescent Moon +10 per hit
             [11164201] = ([11607], 0), // Radiant Bloom: Twilight +60

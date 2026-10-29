@@ -34,3 +34,8 @@ execution is limited by the existing combat model; applying its ratio to the con
 itself implement all of its hits.
 The Chinese description states a total across Water, Fire, Earth and Wind; the four equal damage parameters
 and six animation points do not establish how that total is divided into authoritative hits.
+
+Tetra Vortex and its Reading copy (`SkillConfig` 12316/12326) select hostile players within the configured
+circle around the chosen point, like monster targets. Both configured base rows and their mode-1 versions
+corroborate the same Mixed Accompaniment multiplier increase at all five levels. The extra cast itself is not
+yet implemented, and the generic extra-cast path does not apply these Echo modifiers.

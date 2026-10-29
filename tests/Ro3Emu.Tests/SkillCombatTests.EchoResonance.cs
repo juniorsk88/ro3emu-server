@@ -40,8 +40,13 @@ public sealed partial class SkillCombatTests
             session.Progress!.Career = 2400;
             SetEchoMarks(session, 1004, 5);
             Assert.Equal(new long[] { 8000, 8000, 8000, 8000 }, Ratio(1231601));
+            Assert.Equal(new long[] { 8000, 8000, 8000, 8000 }, Ratio(1232601));
             SetEchoMarks(session, 1004, 6);
             Assert.Equal(new long[] { 13000, 13000, 13000, 13000 }, Ratio(1231601));
+            Assert.Equal(new long[] { 13000, 13000, 13000, 13000 }, Ratio(1232601));
+            session.PassiveSkillModifiers = [([], new SkillParameterRules.Modifier(12326, 15, 2, 1, 0))];
+            Assert.Equal(new long[] { 13000, 13000, 13000, 13000 }, Ratio(1232601));
+            session.PassiveSkillModifiers = [];
             Assert.Equal(new long[] { 22000 }, Ratio(1231501));
             SetEchoMarks(session, 1004, 10);
             Assert.Equal(new long[] { 42000 }, Ratio(1231501));
