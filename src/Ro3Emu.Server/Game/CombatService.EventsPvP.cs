@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Romsg;
+using Ro3Emu.Server.Data.Config;
 
 namespace Ro3Emu.Server.Game;
 
@@ -98,6 +99,12 @@ public sealed partial class CombatService
                 if (!ReferenceEquals(target.Role, targetRole)) continue;
                 await _character.SetHpSpAsync(target, null, null); // publish current HP after the serialized reservation
                 if (!ReferenceEquals(target.Role, targetRole)) continue;
+                if (hp > 0 && result != DamageHitResult.Miss && currentSource()
+                    && CurrentPlayerHit(source, target, attackerRole, targetRole, sceneId) && Script(row) == "IgnitionBreak")
+                    foreach (var tuple in new SkillConfig(row).Buff2)
+                        if (tuple.Length > 0 && tuple[0] == 901601
+                            && RollHostileBuff(JsonSerializer.SerializeToElement(tuple), source, null, target, null, out int id, out int duration, row))
+                            await _buffs.AddAsync(target, id, duration, attackerRole.Id);
                 if (CurrentPlayerHit(source, target, attackerRole, targetRole, sceneId)) await FightingAsync(source);
                 await FightingAsync(target);
                 // The knockback or pull of a hit that left the target alive, as the same skill moves a monster.

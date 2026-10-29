@@ -46,11 +46,21 @@ public sealed partial class CombatService
         int mode = SkillParameterRules.Mode(group, SkillParameterRules.CategoriesOf(_data, requested), SkillParameterRules.Active(session, _data));
         int requestedMode = (int)GameData.Int(requested, "_iMode");
         if (requestedMode != 0 && requestedMode != mode) return null;
+        var row = requested;
         if (mode != 0 && ConfiguredModeRows.TryGetValue((group, level, mode), out int selectedId)
-            && _data.Row("SkillConfig", selectedId) is { } selected)
-            return SkillParameterRules.Effective(session, _data, selected);
-        if (requestedMode != 0) return null;
-        return SkillParameterRules.Effective(session, _data, requested);
+            && _data.Row("SkillConfig", selectedId) is { } selected) row = selected;
+        else if (requestedMode != 0) return null;
+        // Enhanced rows already include their echo bonus; Focused Arrow, Rain of Spears and Blood Cross's second form need it separately.
+        // Focused Arrow's later extra-hit component is separate, so only its first ratio receives +3.
+        var echoes = (mode == 0 || group is 13305 or 11310 || group == 11604 && mode == 4)
+            && EchoDamageSkills.Values.Any(v => v.Groups.Contains(group))
+            ? EchoSkillModifiers(session).Where(m => m.Group == group).ToArray() : [];
+        if (group == 11604 && mode == 4 && echoes.Length > 0) echoes = EchoBloodCrossSecondForm(row, level).ToArray();
+        if (group == 11301 && echoes.Length > 0) row = EchoRiftStun(row, level);
+        if (echoes.Length > 0) row = EchoArea(row, group, level);
+        return echoes.Length == 0 ? SkillParameterRules.Effective(session, _data, row)
+            : SkillParameterRules.Effective(row, [.. echoes, .. SkillParameterRules.Active(session, _data)],
+                SkillParameterRules.CategoriesOf(_data, row));
     }
 
     public bool SkillModeAllowed(GameSession session, JsonElement row) =>
@@ -76,7 +86,8 @@ public sealed partial class CombatService
         if (session.Role == null || session.Progress == null) return;
         var passives = PassiveModifiers(session);
         if (!passives.SequenceEqual(session.PassiveSkillModifiers)) session.PassiveSkillModifiers = passives;
-        var mods = SkillParameterRules.Active(session, _data);
+        var echoMods = EchoSkillModifiers(session);
+        var mods = SkillParameterRules.Active(session, _data).Concat(echoMods).ToArray();
         var update = new SkillBeAffectedParamExNotify { IsAll = true, Uuid = session.Role.Id };
         // Scope 0 names its group; a scope-1 tag selector reaches every learned skill whose row carries its tags.
         var groups = new SortedSet<int>(mods.Where(m => m.Scope == 0).Select(m => m.Group));
@@ -108,6 +119,13 @@ public sealed partial class CombatService
                     else value.AffectValue = GameData.Int(row, field);
                     groupInfo.AffectParam[type] = value;
                 }
+            }
+            // LC_DynamicParamMgr's SkillRange (36) consumes the full _kRange vector in centimetres.
+            if (EchoAreaGroups.Contains(group) && echoMods.Any(m => m.Group == group))
+            {
+                var range = new BeAffectedValueEx();
+                range.AffectValueList.Add(new SkillConfig(row).Range);
+                groupInfo.AffectParam[36] = range;
             }
             if (groupInfo.AffectParam.Count > 0) update.AffectParamDict[group] = groupInfo;
         }

@@ -100,7 +100,7 @@ public sealed partial class CombatService
     {
         var row = action.Row;
         int max = (int)Math.Max(1, GameData.Int(row, "_iTargetMax"));
-        if (GameData.Int(row, "_iRangeType") != 2 && radiusOverride == null)
+        if (!AreaDamageRow(row) && radiusOverride == null)
         {
             var target = FindMonster(s.WorldScene, action.Request.TargetId);
             return target != null && target.Hp > 0 && CanHitMonster(s, target) && Relation(row, false, race: target.Template.Race) ? [target] : [];
@@ -849,8 +849,12 @@ public sealed partial class CombatService
     }
 
     /// <summary>The event players a cast can hit: its area's, a guardian's own area selection, or its locked target.</summary>
+    // Rolling Cutter's description and _iTargetMax specify an area despite _iRangeType 1.
+    private static bool AreaDamageRow(JsonElement row) => GameData.Int(row, "_iRangeType") == SkillRelease.Area
+        || new SkillConfig(row).SkillId == 15303;
+
     private GameSession[] EffectPlayerTargets(GameSession s, ActiveSkillCast action, Vec3 center) =>
-        GameData.Int(action.Row, "_iRangeType") == SkillRelease.Area
+        AreaDamageRow(action.Row)
             ? IsGuardianEffect(action.Row) ? GuardianPlayerTargets(s, action, center) : EventAreaTargets(s, action.Row)
             : EventTarget(s, action.Request.TargetId) is { } eventTarget
                 && PlayerDistance(s, eventTarget) <= Range(action.Row) + 1.5f ? [eventTarget] : [];

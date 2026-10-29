@@ -282,7 +282,7 @@ public sealed partial class CombatService : IGameTicker
 
     public CombatService(World world, MonsterService monsters, CharacterService character, SkillService skills, SceneService scene, BuffService buffs,
         WorldData worldData, SessionRegistry sessions, GameData data, GameLoop loop, ILogger<CombatService> log, PetService pets,
-        SeasonTalentService talents, IOptions<ServerOptions> options)
+        SeasonTalentService talents, EmblemService emblems, IOptions<ServerOptions> options)
     {
         this._world = world;
         this._monsters = monsters;
@@ -307,6 +307,8 @@ public sealed partial class CombatService : IGameTicker
         character.ExtraAttributes.Add(ResonanceAttributes); // Job Resonance stats (CombatService.Restraint)
         world.UnitRemoved.Add(unit => { if (unit is MonsterUnit m) _fightingMonsters.Remove(m); return Task.CompletedTask; });
         skills.Learned.Add(RefreshSkillParametersAsync);
+        character.JobChanged.Add(RefreshSkillParametersAsync);
+        emblems.SkillEffectsChanged = RefreshSkillParametersAsync;
         skills.Learned.Add(character.RefreshStatsAsync);
         buffs.Changed.Add(RefreshSkillParametersAsync);
         talents.EffectsChanged.Add(RefreshSkillParametersAsync);

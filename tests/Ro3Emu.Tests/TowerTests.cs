@@ -195,7 +195,7 @@ public sealed class TowerTests : IAsyncLifetime
     {
         // PowerSuppressConfig: a power under 80% of floor 1's 6000 puts 5000001 (215/216 -10%) on its monsters.
         await using var alice = await InWorld("Alice");
-        await Eligible(alice);
+        await Eligible(alice, level: 33); // level 99 power exceeds the floor recommendation
         var entered = await EnterFloor(alice, 1);
         Assert.Equal(2, entered.Monsters.Length);
         Assert.All(entered.Monsters, m => Assert.Equal(1200, m.Property.Single(p => p.Idx == 101).Data));
