@@ -443,13 +443,14 @@
         "DungeonQuestConfig 5300036 (quest 1 'Complete Louie's game', goal 'Find Kitty-Katie' [5,0,1]) and 5300037 (quest 2 'Retrieve Instrument', goal type 1 without a counter).",
         "PlotInterpretation 140010 and 140020 are run-time stories 1013 and 1014 that no task triggers. Story 1013 (StoryData_1013) shows Louie, Martha, Katie and Fervor in this Culvert, plays dialogues 1010627001-1010627003 ('Let's play a game ... The three of us will hide inside these three Bells, and you'll have to guess where each of us is') and walks Martha, Louie and Katie to x 40, 50 and 60. Story 1014 reveals them at (40, 55), (50, 55), (60, 55), Katie at x 60, and plays 1010627004 (they leave with the bow tie).",
         "NPCs 400134-400136 (bell ring effect 20002): their auto dialogues 20003001-20005001 say 'Here's Katie the kitty!' with 'Choose this one!' running action 211 TriggerNpcInteract on interaction 5300040, 5300041 or 5300042; these send dungeon messages 11 (400134) and 12 (400135, 400136). NPC 400137 is the Bell (bell model 33137).",
-        "Editor sc_pm_pve5sewb_001_dg02: point groups 24 (25-27 at z 65, where story 1013 leaves the gang) and 28 (29-31 at z 55, where story 1014 reveals them); mark point 37 at (32, 42.5) with guide point 38 leading to it from the game area."
+        "Editor sc_pm_pve5sewb_001_dg02: point groups 24 (25-27 at z 65, where story 1013 leaves the gang) and 28 (29-31 at z 55, where story 1014 reveals them); mark point 37 at (32, 42.5) with guide point 38 leading to it from the game area.",
+        "NPCConfig 400046 Strange Device uses interaction 40004601 Pick up; that interaction's after-action names task 10107160, whose target says to pick up the Professor's instrument."
       ],
       "guessed": [
         "The bells stand at group 28 (points 29-31), where story 1014 reveals the gang; the shuffle animation is not reproduced.",
         "Katie's ring (400134, message 11) is under the bell at x 60 (point 31), where Katie stands in both stories; which of 400135/400136 is Louie's or Martha's bell does not matter (both send 12).",
         "A wrong guess (message 12) changes nothing and the player may choose again; the original consequence ('join us as our lowest-ranking lackey') is not recovered.",
-        "Retrieving the instrument completes within 4 m of mark point 37, where guide point 38 leads; no instrument actor or item is named by the client data."
+        "Retrieving the instrument also completes within 4 m of mark point 37, where guide point 38 leads (inferred proximity fallback)."
       ],
       "steps": [
         {
@@ -491,7 +492,11 @@
           "quest": 2,
           "stage": "Retrieve the Professor's instrument",
           "guide": [38],
+          "actors": [
+            { "npc": 400046, "point": 37, "why": "the Professor's Strange Device (NPCConfig 400046) at the guide destination" }
+          ],
           "complete": [
+            { "interaction": 40004601, "why": "Pick up the Professor's instrument" },
             { "point": 37, "radius": 4, "why": "mark point 37, where guide point 38 leads from the game area" }
           ]
         }

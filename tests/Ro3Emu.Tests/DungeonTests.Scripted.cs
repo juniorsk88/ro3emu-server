@@ -275,6 +275,10 @@ public sealed partial class DungeonTests
         Assert.Equal([38L], guide.Vars.Single(v => v.VarId == DungeonService.GuideWayVar).Vi64);
         Assert.Single(alice.Inbox.Snapshot().Where(e => e.IsGame(DungeonService.Event)),
             e => DungeonEventNotify.Parser.ParseFrom(e.Body).Vars.Any(v => v.VarId == DungeonService.GuideWayVar));
+        var device = Assert.Single(await ActorsIn(alice, 1));
+        Assert.Equal((400046, 37L), (device.NpcId, device.Point));
+        Assert.Contains(Session(alice).DungeonAttempt!.Plan.Waves[3].Step!.Complete,
+            trigger => trigger.Kind == ReconstructedDungeons.TriggerKind.Interaction && trigger.Id == 40004601);
         var instrument = Service<WorldData>().Map(scene)!.Points[37];
         await WalkTo(alice, instrument.X + 6, instrument.Y, instrument.Z); // not yet within its 4 m
         await Task.Delay(200);

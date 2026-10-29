@@ -19,6 +19,8 @@ The set contains **34** messages: **15 done, 17 partial, 2 missing, 0 stub**. Al
 * **Buff/resource integration:** **31332/31333/31334, 31134/31135**, actual 31048 status masks, item/movement/cast restrictions, death prevention, energy costs/recovery, late-viewer buff snapshots and controlled expiry. See [skill-buffs.md](skill-buffs.md).
 * **Presentation and dynamic parameters:** **31027/31132**, actual damage **31129**, pause/resume **31133**, boss snapshot **31127** and scene clear **31126**. High/extra timeline and boss-CD dispatch share the actual cast/source owners. See [skill-protocol.md](skill-protocol.md) for qualified routes and exact boundaries.
 
+Storm Gust (`SkillConfig` 12108) describes five Water waves over four seconds: each wave is MATK times the row's displayed percentage plus its flat amount (level 1: 5.5% + 67; level 10: 10% + 130), before defense, element and other modifiers. `_kLogicData` names a 1000 ms interval and 5000 ms ground-object lifetime. Each wave applies the row's 2% Freeze chance and Slow. `_kShowDmg [3,3]` is presentation: `LC_DamageHelper.DealJumpWord` divides one hit among its displayed numbers, and EffectData 1210804 enables multistage display. Neither the skill description nor the configured buff rows establish knockback. Drag-circle PvP targets use the chosen area, as monster targets do. `StormGustDealsFiveConfiguredWavesAndSplitsOnlyTheDisplay` and `StormGustHitsHostilePlayersInTheChosenArea` cover the wire result.
+
 ## Inferred mechanics
 
 The documents linked above enumerate plan entitlement/reset/serialization, buff stacking/status/death, resource and dynamic-parameter policies. Additional combat inferences are:

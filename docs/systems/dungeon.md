@@ -182,7 +182,9 @@ Reconstructed scripted scenes (`Reconstructed/scripted-scenes.json`, same switch
     5300053 at 61), and three boardings sink a ship at any level; sinking both ends the stage. The original's
     UpperCannon gameplay status (GameplayStatusConfig 12) has no abilities in the client data.
   - Payon Forest (1022001): 'Cover Boya and Wule' (reach the standoff point 22 between them and Eddga), then Eddga.
-    Boya and Wule (5300086/5300087) are shown, not fighting.
+    Boya and Wule (5300086/5300087) are shown, not fighting. The client's NPCConfig names their own skills and AIConfig
+    5300007, but the searched client Lua does not establish their targeting, skill selection, kill credit or death/return
+    rules; the upstream companion AI is not enabled until those rules have evidence.
   - The Peco Peco nest (1051001): the Elusive Pecopeco with the Ancient Nest and Bragis shown.
   - Pharaoh (main story, 3120702): Pharaoh with the Relic he leaps out of, his coffin 5300013 at point 24, and the
     Pyramid 5300011 beside him (6 m east, 7 m north of point 20: the scene has no point for it). Its use is **inferred**

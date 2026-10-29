@@ -863,6 +863,7 @@ public sealed partial class CombatService
     private GameSession[] EffectPlayerTargets(GameSession s, ActiveSkillCast action, Vec3 center) =>
         AreaDamageRow(action.Row)
             ? IsGuardianEffect(action.Row) || new SkillConfig(action.Row).SkillId is 12316 or 12326
+                || new SkillConfig(action.Row).Release == SkillRelease.DragCircle
                 ? GuardianPlayerTargets(s, action, center) : EventAreaTargets(s, action.Row)
             : EventTarget(s, action.Request.TargetId) is { } eventTarget
                 && PlayerDistance(s, eventTarget) <= Range(action.Row) + 1.5f ? [eventTarget] : [];

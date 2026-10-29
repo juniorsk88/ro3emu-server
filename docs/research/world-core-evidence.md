@@ -2,6 +2,8 @@
 
 This page binds the world core implementation (scene admission and AOI, movement and flight, revive, effects, NPC interactions, role operations, team, friends and MG_Common) to static client evidence. Season identity remains `SeasonService.PlayBook = 101`. The work implements authenticated wire exchanges and authoritative state; wire tests do not establish live-client rendering or original-server parity. Citations name files of the decompiled client (under your local `re/` folder), the server protos and the exported `data/config` tables.
 
+Battle-call boundary: the client export has 13 AIConfig rows with `_iBattleCallType` or `_iBattleCallResponse` set; 11 call with a positive distance. A search of the available decompiled client Lua and managed DLLs found no reader defining the call's target, camp, chain propagation or selection. The upstream implementation's camp and one-hop rules therefore remain unverified and are not enabled in this release.
+
 ## Ownership and implemented exchanges
 
 | Owner | Message IDs / state | Behavior and evidence |

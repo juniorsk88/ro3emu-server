@@ -166,7 +166,9 @@ public sealed partial class EquipmentService
             _log.LogInformation("{Name} refines grid {Grid} +{Level}: {Result}", session.Role!.Name, grid, level, error?.Why ?? (success ? "success" : $"failed, now +{levels.Refine.GetValueOrDefault(grid)}"));
             await session.SendGameAsync(Refine, new RefineEquipmentRsp
             {
-                Result = error?.Code ?? 0, EquipPos = req.EquipPos, RefineLv = levels.Refine.GetValueOrDefault(grid),
+                // LC_DAL_Equipment._processRefineEquipments shows failure only when refineLv is absent.
+                Result = error?.Code ?? 0, EquipPos = req.EquipPos,
+                RefineLv = error == null && !success ? 0 : levels.Refine.GetValueOrDefault(grid),
                 RefineEffectLv = _character.Resonance(session, "RefiningEffectTable"), RefineLuckyAdd = levels.Luck.GetValueOrDefault(grid),
             });
             await AfterUpgradeAsync(session, error == null);
