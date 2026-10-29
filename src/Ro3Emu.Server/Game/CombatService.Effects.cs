@@ -230,7 +230,7 @@ public sealed partial class CombatService
                 if (CanApplyMoreEffects())
                     foreach (var tuple in Tuples(row, "_kBuff2"))
                         if (CanApplyMoreEffects() && GuardianAllowsHostileBuff(row, tuple, alreadySlowed.Contains(target.Uid))
-                            && RollHostileBuff(tuple, s, null, null, target, out int id, out int duration))
+                            && RollHostileBuff(tuple, s, null, null, target, out int id, out int duration, row))
                             await _buffs.AddSupportAsync(target, id, duration, castingRole.Id,
                                 attributeMultiplier: GuardianPetRules.BuffMultiplier(row), guardianOwned: IsGuardianEffect(row));
                 if (CanApplyMoreEffects() && script is ("Provoke" or "Taunt")) _monsters.Engage(target, s);

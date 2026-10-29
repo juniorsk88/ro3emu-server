@@ -15,6 +15,8 @@ public sealed class CardRulesTests : IAsyncLifetime
 {
     private const int Lunatic = 1420100, Dagger = 2010121;
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(5);
+    private sealed class HighProcRolls : CombatRolls { public override int Proc(int max) => max - 1; }
+    private sealed class LowProcRolls : CombatRolls { public override int Proc(int max) => 0; }
     private readonly string _dataDir = Path.Combine(Path.GetTempPath(), "ro3emu-card-rules-" + Guid.NewGuid().ToString("N"));
     private WebApplication _app = null!;
     private string _httpUrl = "";
@@ -425,6 +427,65 @@ public sealed class CardRulesTests : IAsyncLifetime
     }
 
     [ClientDataFact]
+    public async Task SpecialSightlessMindCardGuaranteesOnlyItsStun()
+    {
+        await using var alice = await InWorld("Alice");
+        var session = Session("Alice");
+        var combat = Service<CombatService>();
+        var skill = Service<GameData>().Row("SkillConfig", 2004501)!.Value;
+        var tuples = skill.GetProperty("_kBuff2").EnumerateArray().ToArray();
+        var stun = tuples.Single(t => t[0].GetInt32() == 901601);
+        var bleed = tuples.Single(t => t[0].GetInt32() == 902501);
+        combat.Rolls = new HighProcRolls();
+        await Service<GameLoop>().InvokeAsync(() =>
+        {
+            var card = new InvItem { Guid = 881105, Entry = 1450401, Stack = 1, Pack = 3, Grid = CharacterService.CardGrid(1, 1) };
+            session.Items.Add(card);
+            bool Lands(System.Text.Json.JsonElement tuple, System.Text.Json.JsonElement row) =>
+                combat.RollHostileBuff(tuple, session, null, null, null, out _, out _, row);
+            Assert.False(Lands(stun, skill));
+            card.Entry = 1460401;
+            Assert.True(Lands(stun, skill));
+            Assert.False(Lands(bleed, skill));
+            Assert.False(Lands(stun, Service<GameData>().Row("SkillConfig", 1000001)!.Value));
+            session.Items.Remove(card);
+            Assert.False(Lands(stun, skill));
+            return Task.CompletedTask;
+        });
+    }
+
+    [ClientDataFact]
+    public async Task SpecialSightlessCardAppliesGuaranteedStunInPlayerCombat()
+    {
+        await using var alice = await InWorld("Alice");
+        await using var bob = await InWorld("Bob");
+        var attacker = Session("Alice");
+        var target = Session("Bob");
+        var combat = Service<CombatService>();
+        var effects = Service<CardEffects>();
+        var skill = Service<GameData>().Row("SkillConfig", 2004501)!.Value;
+        combat.Rolls = new HighProcRolls();
+        await Service<GameLoop>().InvokeAsync(async () =>
+        {
+            var card = new InvItem { Guid = 881108, Entry = 1450401, Stack = 1, Pack = 3, Grid = CharacterService.CardGrid(1, 1) };
+            attacker.Items.Add(card);
+            await effects.OnPvpHitTakenAsync(attacker, target, skill, 100);
+            Assert.DoesNotContain(target.Buffs, b => b.ConfigId == 901601);
+            card.Entry = 1460401;
+            await effects.OnPvpHitTakenAsync(attacker, target, skill, 100);
+            Assert.Contains(target.Buffs, b => b.ConfigId == 901601);
+            Assert.DoesNotContain(target.Buffs, b => b.ConfigId == 902501);
+            foreach (var buff in target.Buffs.Where(b => b.ConfigId is 901601 or 902501).ToArray())
+                await Service<BuffService>().RemoveAsync(target, buff);
+            card.Entry = 1450401;
+            combat.Rolls = new LowProcRolls();
+            await effects.OnPvpHitTakenAsync(attacker, target, skill, 100);
+            Assert.Contains(target.Buffs, b => b.ConfigId == 901601);
+            Assert.Contains(target.Buffs, b => b.ConfigId == 902501);
+        });
+    }
+
+    [ClientDataFact]
     public async Task ReflectCardsCapOnlyTheExtraVitBonus()
     {
         await using var alice = await InWorld("Alice");
@@ -449,6 +510,38 @@ public sealed class CardRulesTests : IAsyncLifetime
                 Assert.Equal(before - 92, stats.Stats(attacker)[2000]); // 32% base + 60% extra, capped separately
             }
         });
+    }
+
+    [ClientDataFact]
+    public async Task DarkPriestDrainsAndPublishesMonsterSpWithConfiguredCap()
+    {
+        await using var alice = await InWorld("Alice");
+        var session = Session("Alice");
+        var data = Service<GameData>();
+        var effects = Service<CardEffects>();
+        var template = Service<MonsterService>().Template(5000001)! with { MaxSp = 3000 };
+        var point = new SpawnPoint(-1, 0, 0, 0, 0, template.NpcId);
+        var monster = new MonsterUnit
+        {
+            Uid = 1L << 50, SceneEntry = session.SceneEntry, Template = template, Hp = template.MaxHp,
+            Group = new SpawnGroup(-1, false, 1, 0, [], [point]), Home = point,
+        };
+        var row = data.Row("SkillConfig", 1000001)!.Value;
+        effects.Roll = _ => 0;
+        try
+        {
+            await Service<GameLoop>().InvokeAsync(async () =>
+            {
+                session.Items.Add(new InvItem { Guid = 881106, Entry = 1440112, Stack = 1, Pack = 3, Grid = CharacterService.CardGrid(1, 1) });
+                Assert.Equal(3000, monster.Entity().Property.Single(p => p.Idx == 2001).Data);
+                await effects.OnDealtAsync(session, monster, row, 100);
+                Assert.Equal(2600, monster.Sp); // 20% of 3000, capped at 400
+                Assert.Equal(2600, monster.Entity().Property.Single(p => p.Idx == 2001).Data);
+                await effects.OnDealtAsync(session, monster, row, 100);
+                Assert.Equal(2600, monster.Sp); // 15-second cooldown
+            });
+        }
+        finally { effects.Roll = bound => Random.Shared.Next(bound); }
     }
 
     [ClientDataFact]

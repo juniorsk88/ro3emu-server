@@ -12,6 +12,16 @@ public sealed partial class CombatService
     /// <summary>A player's skill hit another player (attacker, target, the skill row, damage dealt): card effects and reactions.</summary>
     public List<Func<GameSession, GameSession, JsonElement, long, Task>> PvpHitTaken { get; } = new();
 
+    internal async Task SetMonsterSpAsync(MonsterUnit monster, long sp)
+    {
+        monster.Sp = sp;
+        await _world.ToUnitViewersAsync(monster, AoiAttrChange, new AOIAttrChange
+        {
+            EntityUuid = (ulong)monster.Uid,
+            Property = { new AoIProperty { Idx = 2001, Data = monster.Sp } },
+        });
+    }
+
     /// <summary>Damage reflected to the attacker by a card. It can take the attacker down to 1 HP but never kill (inferred: the death path is the
     /// victim's own handling of a lethal hit).</summary>
     internal async Task ReflectToPlayerAsync(GameSession attacker, GameSession reflector, long amount)

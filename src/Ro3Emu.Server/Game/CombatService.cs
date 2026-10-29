@@ -253,6 +253,7 @@ public sealed partial class CombatService : IGameTicker
     internal Func<GameSession, JsonElement, int, JsonElement>? TargetCountRow { get; set; }
     /// <summary>May the caster's skill put this _kBuff1 buff on the recipient (TalentProcs: talent-gated buffs).</summary>
     internal Func<GameSession, GameSession, int, bool>? SkillBuffAllowed { get; set; }
+    internal Func<GameSession, JsonElement, int, bool>? CardGuaranteesHostileBuff { get; set; }
     public List<Func<GameSession, MonsterUnit, JsonElement, DamageHitResult, long, long>> DamageAdjusters { get; } = new();
     public List<Func<GameSession, MonsterUnit, JsonElement, long, long>> ExtraHitDamage { get; } = new();
 

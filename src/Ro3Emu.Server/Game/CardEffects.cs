@@ -27,7 +27,7 @@ namespace Ro3Emu.Server.Game;
 /// - SP absorb 2050401: _kLogicData [chance bp, ...], desc[1]% of the damage as SP.
 /// - size: 20501 (2050101..) adds _kLogicData[0] bp of damage against Small/Medium/Large (NPCConfig._iSize 1..3)
 ///   monsters; 20500 (2050001..) adds _kLogicData[1] bp with a _kLogicData[0] bp chance.
-/// The remaining gaps include monster SP drain, hidden-monster detection, gear destruction and Endure's hitstun.
+/// The remaining gaps include hidden-monster detection, gear destruction and Endure's hitstun. Monster skill SP spending is not implemented.
 /// Family damage relies on names because no family field was found.
 /// Skill(3) grants (Heal, Disguise, Magnum Break, Envenom, Sight, Sightless Mind) go into RoleProgress.GrantedSkills.
 /// </summary>
@@ -116,6 +116,8 @@ public sealed class CardEffects
         combat.IncomingHitNegators.Add(NegateMagicHit);
         combat.ArmorElementOf = ArmorElement;
         combat.CastIgnoresControl = s => Passives(s).Any(p => GameData.Int(p.Row, "_iBuffID") == Phen);
+        combat.CardGuaranteesHostileBuff = (s, row, buff) => GameData.Int(row, "_iID") == 2004501
+            && buff / 100 == BuffService.StunGroup && Passives(s).Any(p => GameData.Int(p.Row, "_iBuffID") == 20535);
         combat.IncomingDamageAdjusters.Add(LessWhileSilencedAsync);
         combat.TakenAsync.Add(OnTakenAsync);
     }
@@ -244,6 +246,13 @@ public sealed class CardEffects
                 if (heal <= 0) continue;
                 var stats = _character.Stats(s);
                 await _character.SetHpSpAsync(s, stats[2000] + heal, null);
+            }
+            else if (group == SpDrainGroup)
+            {
+                if (desc.Length < 4 || Roll(10000) >= chance || !Ready(s, group, (long)(desc[3] * 1000))) continue;
+                long sp = target.Sp;
+                long drain = Math.Min((long)desc[2], (long)Math.Floor(sp * desc[1] / 100));
+                if (drain > 0) await combat.SetMonsterSpAsync(target, sp - drain);
             }
             else if (logic.Length == 3 && logic[0] == 0 && logic[2] > 0 && _data.Row("BuffConfig", logic[1]) is not null)
             {
@@ -384,6 +393,20 @@ public sealed class CardEffects
     {
         if (damage > 0 && attacker.Role != null && target.Role != null)
         {
+            if (GameData.Int(row, "_iID") == 2004501 && _character.Stats(target)[2000] > 0
+                && row.TryGetProperty("_kBuff2", out var statuses) && statuses.ValueKind == JsonValueKind.Array)
+            {
+                var attackerRole = attacker.Role;
+                var targetRole = target.Role;
+                long scene = attacker.WorldScene;
+                foreach (var tuple in statuses.EnumerateArray())
+                {
+                    if (!ReferenceEquals(attacker.Role, attackerRole) || !ReferenceEquals(target.Role, targetRole)
+                        || attacker.SceneLoading || target.SceneLoading || attacker.WorldScene != scene || target.WorldScene != scene) break;
+                    if (tuple.ValueKind == JsonValueKind.Array && combat.RollHostileBuff(tuple, attacker, null, target, null, out int id, out int duration, row))
+                        await _buffs.AddAsync(target, id, duration, attackerRole.Id);
+                }
+            }
             foreach (var (_, group, chance, desc) in Procs(Passives(attacker).ToList()))
             {
                 if (group != SpDrainGroup || desc.Length < 4 || Roll(10000) >= chance || !Ready(attacker, group, (long)(desc[3] * 1000))) continue;
