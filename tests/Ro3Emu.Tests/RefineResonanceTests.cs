@@ -54,11 +54,9 @@ public sealed class RefineResonanceTests : IAsyncLifetime
         session.EquipLevels.Refine[1] = 14;
         Assert.Equal(3, character.Resonance(session, "RefiningEffectTable"));
 
-        int before = bot.Inbox.Snapshot().Count(e => e.IsGame(CharacterService.EquipSync));
         await character.EquipLevelsChangedAsync(session, persist: false);
-        var sent = bot.Inbox.Snapshot().Where(e => e.IsGame(CharacterService.EquipSync)).Skip(before)
-            .Select(e => DBEquipInfoIncrement.Parser.ParseFrom(e.Body)).ToList();
-        Assert.Contains(sent, m => m.HasRefineEffectLv && m.RefineEffectLv == 3);
+        await bot.Inbox.WaitAsync(e => e.IsGame(CharacterService.EquipSync)
+            && DBEquipInfoIncrement.Parser.ParseFrom(e.Body) is { HasRefineEffectLv: true, RefineEffectLv: 3 }, TimeSpan.FromSeconds(5));
     }
 
     [ClientDataFact]
