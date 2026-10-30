@@ -93,9 +93,10 @@ public sealed class TitleTests : IAsyncLifetime
         Assert.Equal(1, (await Next(alice, TitleService.Sync, DBTitleInfoIncrement.Parser, m => !m.SyncAllMark)).TitleId);
         // Rank 2 needs base level 20 and power 5000.
         Assert.Equal(ErrorCodes.LevelTooLow, await Claim(alice));
-        await Gm(alice, "!lvl 99");
+        await Gm(alice, "!lvl 20");
         await SetBestPower(alice, 4999);
         Assert.Equal(ErrorCodes.Parameter, await Claim(alice));
+        await Gm(alice, "!lvl 99");
         await SetBestPower(alice, 1_000_000);
         Assert.Equal(0, await Claim(alice));
         Assert.Equal(0, await Claim(alice)); // rank 3

@@ -997,7 +997,9 @@ public sealed class GuildCaravanTests : IAsyncLifetime
                             { PlayerID = bobId, SkuIndex = request.Index, DayVersion = show.DayVersion }));
                     return Task.CompletedTask;
                 });
-                for (int i = 0; i < 100 && PendingCount(bobId) == 0; i++) await Task.Delay(20);
+                var deadline = DateTime.UtcNow + Wait;
+                while (DateTime.UtcNow < deadline && PendingCount(bobId) == 0 && !help!.IsCompleted) await Task.Delay(20);
+                if (help!.IsCompleted) await help;
                 Assert.Equal(1, PendingCount(bobId));
                 Assert.False(help!.IsCompleted);
                 var attachment = recipient.Attachment;

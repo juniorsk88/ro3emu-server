@@ -69,7 +69,7 @@ public sealed class WildAfkService : IGameTicker
         scene.Loaded.Add(s => ReconcileAsync(s));
         combat.PlayerDied.Add(s => SuspendAsync(s));
         rewards.QualifiesForBonus = BeforeKillAsync;
-        rewards.AlwaysHighFieldExp = (s, monster) => Field(s) && Ordinary(monster);
+        rewards.AlwaysHighFieldExp = (s, monster) => PublicExpMap(s) && Ordinary(monster);
         rewards.StageAfkKill = StageAfkKill;
         rewards.KillDropsGranted.Add(DropsGrantedAsync);
         daily.BeforeReset = BeforeDailyResetAsync;
@@ -96,8 +96,10 @@ public sealed class WildAfkService : IGameTicker
         return scope;
     }
     private bool Unlocked(GameSession s) => s.Progress != null && _functions.IsOpen(s, 18);
-    private bool Field(GameSession s) => s.InstanceId == 0 && _data.Row("MapConfig", s.SceneEntry) is { } map
-        && GameData.Int(map, "_iSceneType") == 1; // enum scene type: field; private/dungeon maps never qualify.
+    private long PublicSceneType(GameSession s) => s.InstanceId == 0 && _data.Row("MapConfig", s.SceneEntry) is { } map
+        ? GameData.Int(map, "_iSceneType") : 0;
+    private bool Field(GameSession s) => PublicSceneType(s) == 1;
+    private bool PublicExpMap(GameSession s) => PublicSceneType(s) is 1 or 6; // fields and public dungeons, not instances.
     private bool Ordinary(MonsterUnit monster) => _data.Row("NPCConfig", monster.Template.NpcId) is { } npc
         && GameData.Int(npc, "_iWildMonsters") == 1 && GameData.Int(npc, "_iNPCSubType") is 1 or 2;
     private bool MvpAggro(GameSession s) => _world.AllUnits().OfType<MonsterUnit>().Any(m => !m.Dead && !m.Returning

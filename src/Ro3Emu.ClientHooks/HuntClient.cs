@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Ro3Emu.Server.Game;
 
 namespace Ro3Emu.ClientHooks
@@ -14,8 +15,10 @@ namespace Ro3Emu.ClientHooks
             var interactions = PassChallenges.Values(dbm, "m_kCFG_NPCInteractConfig");
             var dialogues = PassChallenges.Values(dbm, "m_kCFG_DialogueConfig");
             var tasks = PassChallenges.Values(dbm, "m_kCFG_TaskConfig");
+            var maps = PassChallenges.Values(dbm, "m_kCFG_MapConfig");
             var texts = global.Obf_RuA<Obf_R.Obf_ff>("LanguageKV");
-            if (npcs == null || interactions == null || dialogues == null || tasks == null || texts == null) return false;
+            var trans = global.Obf_RuA<Obf_R.Obf_ff>("Language")?.Obf_RuA<Obf_R.Obf_Ef>("Trans");
+            if (npcs == null || interactions == null || dialogues == null || tasks == null || maps == null || texts == null || trans == null) return false;
             var rawget = global.Obf_LuA<Obf_R.Obf_Ef>("rawget");
             if (CustomNpcClient.Exists(rawget, npcs, Npc) && CustomNpcClient.Exists(rawget, interactions, Dialog)
                 && CustomNpcClient.Exists(rawget, interactions, Accept) && CustomNpcClient.Exists(rawget, interactions, Deliver)
@@ -29,6 +32,7 @@ namespace Ro3Emu.ClientHooks
             PassChallenges.Text(texts, TextBase + 100, "Complete caçadas para ganhar EXP de base e de classe.");
             PassChallenges.Text(texts, TextBase + 101, "Aceitar caçada");
             PassChallenges.Text(texts, TextBase + 102, "Concluir caçada");
+            PassChallenges.Text(texts, TextBase + 103, "[Caça]");
             var npc = CustomNpcClient.Inherit(global, template);
             PassChallenges.RawSet(npc, "_iID", Npc);
             PassChallenges.RawSet(npc, "_kName", PassChallenges.List(TextBase));
@@ -48,21 +52,31 @@ namespace Ro3Emu.ClientHooks
             var leave = new NpcOption(NpcServiceTable.LeaveText, NpcServiceTable.LeaveIcon, new[] { new[] { "8", "TOPBAR", "UI_Sys_NpcDialogPanel" } });
             var close = PassChallenges.Row(NpcShops.ToPairs(NpcServiceTable.OptionFields(Dialog, Npc, 4, leave)));
             PassChallenges.RawSet(dialogues, Dialog, PassChallenges.List(line, accept, deliver, close));
+            var waypoints = new Dictionary<(int, int), long>();
             for (int level = 1; level <= 99; level++)
             {
                 var (monster, map) = HuntTargets.ForLevel(level);
                 var monsterRow = npcs.Obf_ruA<long, Obf_R.Obf_ff>(monster);
-                var nameIds = monsterRow?.Obf_RuA<Obf_R.Obf_ff>("_kName");
-                long nameId = nameIds == null ? 0 : LuaPatches.ToLong(nameIds.Obf_ruA<long, object>(1L));
-                var nameRow = nameId == 0 ? null : texts.Obf_ruA<long, Obf_R.Obf_ff>(nameId);
-                string monsterName = nameRow?.Obf_RuA<string>("_kDes") ?? "monstros";
+                var mapRow = maps.Obf_ruA<long, Obf_R.Obf_ff>(map);
+                var monsterName = Translate(trans, monsterRow?.Obf_RuA<Obf_R.Obf_ff>("_kName"));
+                var mapName = Translate(trans, mapRow?.Obf_RuA<Obf_R.Obf_ff>("_iName"));
+                if (monsterName == null || mapName == null) return false;
+                if (!waypoints.TryGetValue((monster, map), out long waypoint))
+                {
+                    waypoint = FindWaypoint(global, mapRow, map, monster);
+                    if (waypoint <= 0) return false;
+                    waypoints[(monster, map)] = waypoint;
+                }
                 long text = TextBase + level;
-                PassChallenges.Text(texts, text, "Caça: derrote 30 " + monsterName);
+                long targetText = TextBase + 200 + level;
+                PassChallenges.Text(texts, text, "Caçada: " + monsterName);
+                PassChallenges.Text(texts, targetText, mapName + ": Derrote " + monsterName + "*");
                 var task = CustomNpcClient.Inherit(global, taskTemplate);
                 PassChallenges.RawSet(task, "_iTaskID", FirstTask + level - 1);
                 PassChallenges.RawSet(task, "_iName", PassChallenges.List(text));
                 PassChallenges.RawSet(task, "_iTaskDescribe", PassChallenges.List(text));
-                PassChallenges.RawSet(task, "_iTargetDescribe", PassChallenges.List(text));
+                PassChallenges.RawSet(task, "_iTargetDescribe", PassChallenges.List(targetText));
+                PassChallenges.RawSet(task, "_iShowTag", PassChallenges.List(TextBase + 103));
                 PassChallenges.RawSet(task, "_iTaskType", 2L);
                 PassChallenges.RawSet(task, "_iTaskSonType", 0L);
                 PassChallenges.RawSet(task, "_iCondition", 0L);
@@ -78,13 +92,66 @@ namespace Ro3Emu.ClientHooks
                 PassChallenges.RawSet(task, "_kEXECAction", PassChallenges.List(PassChallenges.List("")));
                 PassChallenges.RawSet(task, "_kTimeLimit", 0L);
                 PassChallenges.RawSet(task, "_kProgressTarget", PassChallenges.List(PassChallenges.List(104002L, (long)monster, 30L)));
-                var track = PassChallenges.List(PassChallenges.List("142", map.ToString(), monster.ToString(), "-1"));
+                var track = PassChallenges.List(PassChallenges.List("142", map.ToString(), waypoint.ToString(), "-1"));
                 PassChallenges.RawSet(task, "_kTrack", track);
                 PassChallenges.RawSet(task, "_kPCTrack", track);
                 PassChallenges.RawSet(task, "_kEXP", PassChallenges.List());
                 PassChallenges.RawSet(tasks, FirstTask + level - 1, task);
             }
             return true;
+        }
+
+        private static string Translate(Obf_R.Obf_Ef trans, Obf_R.Obf_ff key)
+        {
+            if (key == null) return null;
+            var result = trans.Obf_HuA(key);
+            return result != null && result.Length > 0 ? result[0] as string : null;
+        }
+
+        private static long FindWaypoint(Obf_R.Obf_ff global, Obf_R.Obf_ff mapRow, int map, int monster)
+        {
+            var name = mapRow?.Obf_RuA<string>("_kResSceneEditorName");
+            if (string.IsNullOrEmpty(name)) return 0;
+            var module = global.Obf_LuA<Obf_R.Obf_Ef>("require").Obf_HuA(name);
+            var scene = module != null && module.Length > 0 ? module[0] as Obf_R.Obf_ff : null;
+            var points = scene?.Obf_RuA<Obf_R.Obf_ff>("m_kWorldMonsterSpawnPoints");
+            var groups = scene?.Obf_RuA<Obf_R.Obf_ff>("m_kWorldMonsterSpawnGroups");
+            var next = global.Obf_LuA<Obf_R.Obf_Ef>("next");
+            var loadedActions = global.Obf_LuA<Obf_R.Obf_Ef>("require").Obf_HuA("lc_interactactions");
+            var actions = loadedActions != null && loadedActions.Length > 0 ? loadedActions[0] as Obf_R.Obf_ff : null;
+            var getPosition = actions?.Obf_RuA<Obf_R.Obf_Ef>("GetPosByTargetID");
+            if (points == null || groups == null || next == null || getPosition == null) return 0;
+            object key = null;
+            while (true)
+            {
+                var pair = next.Obf_HuA(points, key);
+                if (pair == null || pair.Length < 2 || pair[0] == null) break;
+                key = pair[0];
+                var point = pair[1] as Obf_R.Obf_ff;
+                if (point == null || !ContainsMonster(groups, point, monster)) continue;
+                long id = LuaPatches.ToLong(key);
+                var position = getPosition.Obf_HuA((long)map, id);
+                if (position != null && position.Length > 1 && LuaPatches.ToLong(position[1]) == 5) return id;
+            }
+            return 0;
+        }
+
+        private static bool ContainsMonster(Obf_R.Obf_ff groups, Obf_R.Obf_ff point, int monster)
+        {
+            long groupId = LuaPatches.ToLong(point.Obf_RuA<object>("monsterGroupId"));
+            var group = groups.Obf_ruA<long, Obf_R.Obf_ff>(groupId);
+            if (group == null) return false;
+            if (!(group.Obf_RuA<object>("m_bUseMaxMinRefreshId") is bool pooled) || !pooled)
+                return LuaPatches.ToLong(point.Obf_RuA<Obf_R.Obf_ff>("m_kConfigIds")?.Obf_ruA<long, object>(1L)) == monster;
+            var limits = group.Obf_RuA<Obf_R.Obf_ff>("m_kMonsterRefreshLimitDatas");
+            if (limits == null) return false;
+            for (long i = 1; ; i++)
+            {
+                var limit = limits.Obf_ruA<long, Obf_R.Obf_ff>(i);
+                if (limit == null) return false;
+                if (LuaPatches.ToLong(limit.Obf_RuA<object>("m_kConfigId")) == monster &&
+                    LuaPatches.ToLong(limit.Obf_RuA<object>("m_iLimitCount_max")) > 0) return true;
+            }
         }
 
         private static Obf_R.Obf_ff Option(long text, long action, long sort)

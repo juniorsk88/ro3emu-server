@@ -161,7 +161,7 @@ public sealed class RewardService
             && nd.ValueKind == JsonValueKind.Object && nd.TryGetProperty(bonus ? "1" : "0", out var env))
         {
             RollPools(env, player, drops, monster.Template.Level, pools);
-            // Server policy: keep ordinary loot, but use the Bonus Time EXP for common field monsters.
+            // Server policy: keep ordinary loot, but use Bonus Time EXP for common public-world monsters.
             if (!bonus && AlwaysHighFieldExp?.Invoke(player, monster) == true && nd.TryGetProperty("1", out var high))
             {
                 var highDrops = new List<(int Entry, int Count)>();

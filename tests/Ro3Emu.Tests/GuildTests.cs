@@ -540,6 +540,12 @@ public sealed partial class GuildTests : IAsyncLifetime
     [ClientDataFact]
     public async Task RenamePaymentIsAtomicAndAQueuedRenameCannotResurrectDissolvedGuild()
     {
+        var gameLoop = _app.Services.GetRequiredService<GameLoop>();
+        await gameLoop.InvokeAsync(() =>
+        {
+            gameLoop.Remove(_app.Services.GetRequiredService<PowerService>());
+            return Task.CompletedTask;
+        });
         await using var alice = await InWorld("Alice");
         await Level("alice");
         long id = await CreateGuild(alice, "First");
@@ -572,11 +578,11 @@ public sealed partial class GuildTests : IAsyncLifetime
                     service.EditAsync(session, new GuildEditReq { Tp = (GuildEditReq.Types.EditType)2, Name = "Third" }));
                 return Task.CompletedTask;
             });
-            await loop.InvokeAsync(() => service.LeaveAsync(session));
+            await loop.InvokeAsync(() => service.LeaveAsync(session)).WaitAsync(Wait);
             Assert.Equal(0, (await Next(alice, GuildService.Leave, GuildMemberLeaveResp.Parser)).Result);
         }
         finally { session.StateLock.Release(); }
-        await pendingRename!;
+        await pendingRename!.WaitAsync(Wait);
         Assert.NotEqual(0, (await Next(alice, GuildService.Edit, GuildEditResp.Parser, x => x.Name == "Third" || x.Result != 0)).Result);
         Assert.Null(_app.Services.GetRequiredService<GuildStore>().Get(id));
         Assert.Equal(10, session.Progress.Currency.GetValueOrDefault(3));

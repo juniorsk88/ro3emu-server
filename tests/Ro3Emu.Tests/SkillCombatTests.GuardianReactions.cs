@@ -47,11 +47,10 @@ public sealed partial class SkillCombatTests
             return Task.CompletedTask;
         });
         await EquipGuardian(alice, 11001, 1611001);
-        long hp = Character.Stats(target)[2000];
         await alice.SendGameAsync(CombatService.UseSkill, new CastSkillReq { SkillId = 2356201 });
         Assert.Equal(0, (await Next(alice, CombatService.UseSkill, CastSkillRsp.Parser)).Result);
-        await Next(alice, CombatService.SkillHit, SkillHitInfo.Parser, h => h.SkillId == 2356101);
-        Assert.Equal(hp, Character.Stats(target)[2000]);
+        var heal = await Next(alice, CombatService.SkillHit, SkillHitInfo.Parser, h => h.SkillId == 2356101);
+        Assert.DoesNotContain(heal.Dsts, dst => dst.DstID == target.Role!.Id);
     }
 
     [ClientDataFact]

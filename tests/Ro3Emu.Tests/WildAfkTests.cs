@@ -323,6 +323,35 @@ public sealed class WildAfkTests : IAsyncLifetime
     }
 
     [ClientDataFact]
+    public async Task PublicDungeonKillsUseHighExpWithoutChangingBonusTime()
+    {
+        await using var bot = await InWorld();
+        await Gm(bot, "!lvl 65");
+        await Warp(bot, 10552); // Matyr is level 58; the level-gap correction is 70%.
+        long before = await Query(bot);
+        long uid = 0;
+        Vec3 position = null!;
+        await OnLoop(() =>
+        {
+            var s = Session(bot);
+            var monster = Service<World>().Map(s.WorldScene).Units.OfType<MonsterUnit>()
+                .First(m => !m.Dead && m.Template.NpcId == 5000074);
+            monster.Hp = 1; monster.Moving = false; monster.NextRoamMs = long.MaxValue;
+            uid = monster.Uid; position = monster.Pos;
+            return Task.CompletedTask;
+        });
+        await bot.SendGameAsync(MsgId.Walk, new WalkReq { Pos = position, BStop = true, SpeedRate = 1 });
+        await bot.SendGameAsync(CombatService.UseSkill, new CastSkillReq { SkillId = 1000001, TargetId = uid });
+        Assert.Equal(0, (await Next(bot, CombatService.UseSkill, CastSkillRsp.Parser)).Result);
+        await Next(bot, CombatService.SkillHit, SkillHitInfo.Parser, x => x.Dsts.Any(d => d.DstID == uid && d.IsDead));
+        var reward = await Next(bot, CharacterService.GetRewardNotify, GetRewardNotify.Parser,
+            x => x.RewardType.Contains(1) && x.Rewards.Any(i => i.ItemEntry == 100));
+        Assert.Equal(Service<CharacterService>().WithPursueBonus(65, 699), reward.Rewards.Single(i => i.ItemEntry == 100).Stack);
+        Assert.Equal(699, reward.Rewards.Single(i => i.ItemEntry == 101).Stack);
+        Assert.Equal(before, await Query(bot));
+    }
+
+    [ClientDataFact]
     public async Task MonitorCapsIdleChargeAndAutoOffPauseAndSceneExitStopConsumption()
     {
         await using var bot = await InWorld();
