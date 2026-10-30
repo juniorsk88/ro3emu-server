@@ -124,7 +124,7 @@ namespace Ro3Emu.ClientHooks
             return false;
         }
 
-        private static object[] ToPairs(List<KeyValuePair<string, object>> fields)
+        internal static object[] ToPairs(List<KeyValuePair<string, object>> fields)
         {
             var pairs = new object[fields.Count * 2];
             for (int i = 0; i < fields.Count; i++)

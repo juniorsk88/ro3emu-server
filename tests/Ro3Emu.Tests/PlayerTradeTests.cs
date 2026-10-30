@@ -100,7 +100,8 @@ public sealed class PlayerTradeTests : IAsyncLifetime
 
         await Up(alice, new { op = "trade.offer", items = new[] { new { guid = aliceItem, n = 2 } }, zeny = 500 });
         await Up(bob, new { op = "trade.offer", items = new[] { new { guid = bobItem, n = 1 } }, zeny = 0 });
-        var seen = await Down(alice, e => Open(e, x => x.GetProperty("theirs").GetProperty("items").GetArrayLength() == 1));
+        var seen = await Down(alice, e => Open(e, x => x.GetProperty("theirs").GetProperty("items").GetArrayLength() == 1
+            && x.GetProperty("mine").GetProperty("zeny").GetInt64() == 500));
         Assert.Equal(500, seen.GetProperty("mine").GetProperty("zeny").GetInt64());
 
         // Too soon after the last change: not accepted.

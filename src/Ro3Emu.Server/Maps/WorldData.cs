@@ -274,6 +274,21 @@ public sealed partial class WorldData(IOptions<ServerOptions> options, GameData 
                     data.TextOf(npcRow, "_kName"), (int)GameData.Int(npcRow, "_iCamp"), WorldNpc.Float(pos, "x"),
                     WorldNpc.Float(pos, "y"), WorldNpc.Float(pos, "z"), WorldNpc.Float(p, "direction"), p));
             }
+        if (sceneEntry == Game.CustomNpcSettings.Prontera)
+        {
+            var custom = new Game.CustomNpcSettings(options).Read();
+            foreach (var (enabled, id, template, label, x, z) in new[]
+            {
+                (custom.Healer, Game.CustomNpcSettings.HealerNpc, Game.CustomNpcSettings.HealerTemplate, "Curandeira", 156.5f, 190.5f),
+                (custom.Hunter, Game.CustomNpcSettings.HunterNpc, Game.CustomNpcSettings.HunterTemplate, "Caçador", 169.5f, 202.5f),
+            })
+            {
+                if (!enabled || data.Row("NPCConfig", template) is not { } npcRow) continue;
+                float y = map.Nav?.WalkHeight(x, z, 0.2f) ?? 0.2f;
+                npcs.Add(new WorldNpc(NpcUidBase | sceneEntry << 16 | (long)npcs.Count, sceneEntry, WorldNpcKind.Npc,
+                    id, label, (int)new Data.Config.NPCConfig(npcRow).Camp, x, y, z, 0, npcRow));
+            }
+        }
         var spawnGroups = LoadSpawnGroups(se);
         log.LogInformation("Map {Scene} {Name}: {Npcs} NPC/portal/Kafra, {Groups} spawn groups, born {Born}, nav {W}x{H}",
             sceneEntry, data.MapName(sceneEntry), npcs.Count, spawnGroups.Count, born, map.Nav?.Width, map.Nav?.Height);

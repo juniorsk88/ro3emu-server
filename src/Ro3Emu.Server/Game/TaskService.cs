@@ -89,6 +89,8 @@ public sealed partial class TaskService
         this._scene = scene;
         this._clock = clock;
         this.options = options;
+        scene.CustomNpcReady = SyncHuntsOnReadyAsync;
+        scene.CustomHuntAction = HuntActionAsync;
         combat.Killed.Add(OnKillAsync);
         combat.Dealt.Add((s, m, damage) => { if (damage > 0 && s.Role != null) _participants.GetOrCreateValue(m).Add(s.Role.Id); });
         character.JobChanged.Add(s => { QueueRefresh(s); return Task.CompletedTask; });
@@ -118,6 +120,11 @@ public sealed partial class TaskService
     {
         if (session.Tasks == null) return Task.CompletedTask;
         var view = session.Tasks.Clone();
+        if (!session.CustomNpcRows)
+        {
+            foreach (var id in view.Infos.Keys.Where(HuntCatalog.IsHunt).ToArray()) view.Infos.Remove(id);
+            foreach (var id in view.CompleteTaskNum.Keys.Where(HuntCatalog.IsHunt).ToArray()) view.CompleteTaskNum.Remove(id);
+        }
         foreach (var extra in ExtraTasks)
             foreach (var info in extra(session)) view.Infos[info.TaskId] = info;
         return CharacterService.SyncAsync(session, TaskInfoSync, view);
@@ -359,14 +366,35 @@ public sealed partial class TaskService
         // receive-mode/repeat mismatches use status, not a fabricated repeat policy.
         int result = session.Tasks == null ? ErrorCodes.Unknown
             : !defs.TryGetValue(req.Id, out var def) ? ErrorCodes.TaskNoConfig
+            : HuntCatalog.IsHunt(req.Id) && (!session.CustomNpcRows || !new CustomNpcSettings(options).Read().Hunter
+                || session.Progress == null || req.Id != HuntCatalog.FirstTask + Math.Clamp(session.Progress.Level, 1, 99) - 1
+                || session.Tasks.Infos.Any(x => HuntCatalog.IsHunt(x.Key) && Active(session, x.Key))
+                || !CanUseHunter(session, req.NpcId))
+                ? ErrorCodes.TaskRequirements
             : Active(session, req.Id) ? ErrorCodes.TaskExists
-            : IsDelivered(session, req.Id) || def.Accept is not (ReceiveNpc or ReceiveUi) ? ErrorCodes.TaskStatus
+            : IsDelivered(session, req.Id) && !HuntCatalog.IsHunt(req.Id) || def.Accept is not (ReceiveNpc or ReceiveUi) ? ErrorCodes.TaskStatus
             : !def.Pre.All(p => IsDelivered(session, p)) ? ErrorCodes.TaskPrerequisite
             : !Ready(session, def) ? ErrorCodes.TaskRequirements
             : def.Accept == ReceiveNpc ? ValidateNpc(session, def.AcceptArgs, req.NpcId) : 0;
         bool ok = result == 0;
         if (ok) Accept(session, req.Id);
         _log.LogInformation("{Name} accepts task {Task}: {Result}", session.Role?.Name, req.Id, ok ? "ok" : "refused");
+        if (HuntCatalog.IsHunt(req.Id))
+        {
+            // The client's accept handler treats every response as success and needs the task already synchronized.
+            if (ok)
+            {
+                await SettleAsync(session);
+                await session.SendGameAsync(TaskAccept, new TaskAcceptResp { Result = 0, Id = req.Id, NpcId = req.NpcId });
+            }
+            else await session.SendGameAsync(ApiError, new APIErrorMsg
+            {
+                ErrorCode = result, OriginMsgId = TaskAccept,
+                ErrorParams = { new ErrorParam { ParamType = (ErrorParamType)7,
+                    ParamValue = { req.Id.ToString(System.Globalization.CultureInfo.InvariantCulture) } } },
+            });
+            return;
+        }
         await session.SendGameAsync(TaskAccept, new TaskAcceptResp { Result = result, Id = req.Id, NpcId = req.NpcId });
         if (ok) await SettleAsync(session);
     }
@@ -386,6 +414,9 @@ public sealed partial class TaskService
                 : info.Status != Finished || def.Deliver is not (ReceiveNpc or ReceiveUi) && !ActivityClaim(session, def) ? ErrorCodes.TaskStatus
                 : ChapterLocked(info) ? ErrorCodes.TaskRequirements
                 : !Complete(session, def, info) ? ErrorCodes.TaskRequirements
+                : HuntCatalog.IsHunt(one.Id) && (!session.CustomNpcRows || !new CustomNpcSettings(options).Read().Hunter
+                    || !CanUseHunter(session, one.NpcId))
+                    ? ErrorCodes.TaskRequirements
                 : def.Deliver == ReceiveNpc ? ValidateNpc(session, def.DeliverArgs, one.NpcId) : 0;
             if (result == 0) result = await DeliverCoreAsync(session, RequireTaskOwner(session), one.Id);
             // LC_DAL_Task treats every data row as a success regardless of result (error-map §6).
@@ -603,7 +634,7 @@ public sealed partial class TaskService
         // Daily owns reissuing a Running instance even after a previous completion; history is not that instance's status.
         if (session.Tasks == null || !Active(session, id)) return ErrorCodes.TaskStatus;
         var daily = PrepareDailyDelivery?.Invoke(session, id);
-        if (IsDelivered(session, id) && daily?.MirrorChanged != true) return ErrorCodes.TaskStatus;
+        if (IsDelivered(session, id) && daily?.MirrorChanged != true && !HuntCatalog.IsHunt(id)) return ErrorCodes.TaskStatus;
         var def = Defs()[id];
         if (!TryDeliveryActions(session, context, def, out var costs, out bool cutScene, out int? questMount)) return ErrorCodes.TaskRequirements;
         foreach (var target in def.Targets.Where(t => t[0] == TSubmit))
@@ -611,7 +642,7 @@ public sealed partial class TaskService
             if (!Supported(target) || target[2] > int.MaxValue) return ErrorCodes.TaskRequirements;
             costs.Add(((int)target[1], (int)target[2]));
         }
-        var expectedTasks = daily == null ? null : session.Tasks.ToByteArray();
+        var expectedTasks = daily == null && !HuntCatalog.IsHunt(id) ? null : session.Tasks.ToByteArray();
         AwardPlan? deliveredPlan = null;
         var attachment = session.Attachment;
         var next = session.Tasks.Clone();
@@ -624,11 +655,14 @@ public sealed partial class TaskService
             // 5021 is the authoritative season snapshot sent to this session, also used by client previews.
             int? playBook = session.Synced.GetValueOrDefault(SeasonService.SeasonSync) is DBSeasonInfo { Current: { } current }
                 ? (int)current.PlayBookId : null;
-            var plan = _awards.Resolve(session, def.Award, playBook);
+            var huntReward = HuntCatalog.IsHunt(id) ? _character.HuntReward(session.Progress!) : (Base: def.Exp, Job: 0L);
+            var plan = HuntCatalog.IsHunt(id)
+                ? new AwardPlan(0, 0, huntReward.Job > 0 ? [new AwardGrant(CharacterService.JobExpItem, checked((int)huntReward.Job))] : [])
+                : _awards.Resolve(session, def.Award, playBook);
             var runtime = new TaskRuntimeState { CompletedGuides = session.TaskRuntime.CompletedGuides.ToHashSet(), InCutScene = session.InCutScene || cutScene };
             string awardSource = $"task/{session.Role!.Id}/{id}/{next.CompleteTaskNum[id]}/" +
                 $"{session.Daily?.DailyEpoch ?? 0}/{session.Daily?.WeeklyEpoch ?? 0}";
-            if (!await _character.ApplyAwardAsync(session, plan, def.Exp, costs, next.ToByteArray(),
+            if (!await _character.ApplyAwardAsync(session, plan, huntReward.Base, costs, next.ToByteArray(),
                 JsonSerializer.SerializeToUtf8Bytes(runtime), expectedDaily: daily?.Before, nextDaily: daily?.After,
                 expectedTasks: expectedTasks, persist: questMount is { } ride ? tx => _mounts.PersistQuestRide(session, ride, tx) : null,
                 committed: questMount is { } appliedRide ? () => _mounts.ApplyQuestRideCore(session, context, appliedRide) : null,
@@ -664,6 +698,33 @@ public sealed partial class TaskService
         var context = session.Owners?.Current ?? throw new InvalidOperationException("Task Core requires an active owner capability.");
         context.AssertRole(session.Role!.Id);
         return context;
+    }
+
+    private bool CanUseHunter(GameSession session, long uid) => _worldData.Npc(uid) is { } npc
+        && npc.NpcId == CustomNpcSettings.HunterNpc && SceneService.VisibleTo(session, npc)
+        && ValidateNpc(session, [2, CustomNpcSettings.HunterNpc, CustomNpcSettings.Prontera, 0, 0], uid) == 0;
+
+    private async Task SyncHuntsOnReadyAsync(GameSession session)
+    {
+        if (session.Role == null || session.Tasks == null) return;
+        using var gate = await LockTasksAsync(session);
+        await SyncTasksAsync(session);
+    }
+
+    private async Task HuntActionAsync(GameSession session, WorldNpc npc, int action)
+    {
+        if (session.Progress == null || session.Tasks == null) return;
+        long current = HuntCatalog.FirstTask + Math.Clamp(session.Progress.Level, 1, 99) - 1;
+        if (action == CustomNpcSettings.HunterAccept)
+            await AcceptAsync(session, new TaskAcceptReq { Id = current, NpcId = npc.Uid });
+        else if (action == CustomNpcSettings.HunterDeliver)
+        {
+            long active = session.Tasks.Infos.Values.FirstOrDefault(i => HuntCatalog.IsHunt(i.TaskId)
+                && i.Status is Running or Finished)?.TaskId ?? current;
+            var request = new TaskDeliveryReq();
+            request.Req.Add(new TaskDeliverySingleReq { Id = active, NpcId = npc.Uid });
+            await DeliverAsync(session, request);
+        }
     }
 
     /// <summary>Accepts every Auto task whose pre-tasks are delivered and whose condition holds; returns how many.</summary>

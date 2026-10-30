@@ -110,7 +110,8 @@ namespace Ro3Emu.ClientHooks
                 try
                 {
                     if (!Present()) Debug.Log("[Ro3Emu.Pass] config reloaded; challenge rows " + (Inject() ? "added again" : "NOT added"));
-                    else if (Configs() is { } dbm) NpcShops.Inject(dbm); // DialogueConfig can be released on its own
+                    else if (Configs() is { } dbm) { NpcShops.Inject(dbm); CustomNpcClient.Inject(dbm, _global); } // DialogueConfig can be released on its own
+                    if (Configs() is { } loaded && HuntClient.Inject(loaded, _global)) CustomNpcClient.Hello(loaded, _global);
                 }
                 catch (Exception e) { Debug.LogWarning("[Ro3Emu.Pass] row check failed: " + e.Message); }
             }
@@ -184,6 +185,7 @@ namespace Ro3Emu.ClientHooks
                 "_kTaskRenew", List(List(0L, TaskType, DailySonType, 0L), List(0L, TaskType, WeeklySonType, 0L))));
             NovicePass.Inject(dbm, texts);
             NpcShops.Inject(dbm);
+            CustomNpcClient.Inject(dbm, _global);
             return Present();
         }
 

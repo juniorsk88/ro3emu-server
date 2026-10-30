@@ -23,6 +23,10 @@ public sealed partial class CharacterService
 
     private long JobExpNeed(int career, int jobLevel) => JobLvRow(career, jobLevel) is { } row ? GameData.Int(row, "_iJobeExp") : 0;
 
+    internal (long Base, long Job) HuntReward(RoleProgress progress) =>
+        (checked(BaseExpNeed(progress.Level) * 3 / 10), progress.JobLevel >= MaxJobLevel(progress.Career)
+            ? 0 : checked(JobExpNeed(progress.Career, progress.JobLevel) * 3 / 10));
+
     /// <summary>All stat points a role has earned: the starting 48, BaseLvConfig._iStatusPoint per level reached, GM extras.</summary>
     public int TotalPoints(RoleProgress p) =>
         StartingStatPoints + p.BonusPoints + Enumerable.Range(2, Math.Max(0, p.Level - 1))

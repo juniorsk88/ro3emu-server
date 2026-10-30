@@ -52,6 +52,8 @@ public sealed class GameData(IOptions<ServerOptions> options, ILogger<GameData> 
         else if (doc.RootElement.ValueKind == JsonValueKind.Array)
             foreach (var (row, i) in doc.RootElement.EnumerateArray().Select((r, i) => (r, i)))
                 table[row.ValueKind == JsonValueKind.Object && row.TryGetProperty("_iID", out var rid) ? rid.ToString() : (i + 1).ToString()] = row;
+        if (Path.GetFileName(path).Equals("TaskConfig.json", StringComparison.OrdinalIgnoreCase))
+            Config.HuntTaskRows.AddTo(table);
         return table;
     }
 

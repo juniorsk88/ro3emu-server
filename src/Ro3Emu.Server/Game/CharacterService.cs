@@ -43,7 +43,7 @@ public sealed partial class CharacterService(RoleStore roles, ItemStore itemStor
     private const int ItemTypeEquip = 5;
     private const int ZenyId = 1;
     private const int BaseExpItem = 100;
-    private const int JobExpItem = 101;
+    internal const int JobExpItem = 101;
 
     /// <summary>ItemAttrTypeEnum keys: 3 = appraised (equipment can be worn only when 1), 10001 = set-up source.</summary>
     internal const int AttrAppraise = 3;

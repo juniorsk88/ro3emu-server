@@ -10,7 +10,7 @@ namespace Ro3Emu.Server.Game;
 /// destroys all units on a map change). Also NPC interaction (32700: portals, Kafras, dialogs), 30012 / 30131 jumps and
 /// the walk check against the client's nav grid.
 /// </summary>
-public sealed partial class SceneService(IOptions<ServerOptions> options, World world, WorldData worldData, MonsterService monsters, BuffService buffs, Data.GameData data, ILogger<SceneService> log, PublicLineManager lines, TimeProvider clock)
+public sealed partial class SceneService(IOptions<ServerOptions> options, World world, WorldData worldData, MonsterService monsters, BuffService buffs, CharacterService character, Data.GameData data, ILogger<SceneService> log, PublicLineManager lines, TimeProvider clock)
 {
     public const uint NpcInteraction = 32700;
     public const uint SceneTeleport = 30012;
@@ -266,7 +266,7 @@ public sealed partial class SceneService(IOptions<ServerOptions> options, World 
                 if (worldData.Map(s.SceneEntry) is { Npcs.Count: > 0 } map)
                 {
                     var view = new AoIViewChangeData();
-                    foreach (var npc in map.Npcs) view.Bases.Add(NpcEntity(npc));
+                    foreach (var npc in map.Npcs.Where(n => VisibleTo(s, n))) view.Bases.Add(NpcEntity(npc));
                     await s.SendGameAsync(GameAoiSink.SyncAoiView, view);
                     if (!CurrentScene() || s.SceneLoading) return;
                 }
@@ -322,7 +322,7 @@ public sealed partial class SceneService(IOptions<ServerOptions> options, World 
         if (!current()) return;
         var view = new AoIViewChangeData();
         if (worldData.Map(s.SceneEntry) is { Npcs.Count: > 0 } map)
-            foreach (var npc in map.Npcs) view.Bases.Add(NpcEntity(npc));
+            foreach (var npc in map.Npcs.Where(n => VisibleTo(s, n))) view.Bases.Add(NpcEntity(npc));
         await s.SendGameAsync(GameAoiSink.SyncAoiView, view);
         if (!current()) return;
         await world.ReplayViewAsync(s, current);
@@ -358,20 +358,37 @@ public sealed partial class SceneService(IOptions<ServerOptions> options, World 
         var npc = worldData.Npc(req.NpcUid);
         // (inferred from the codes' texts).
         int code = npc == null || npc.SceneEntry != s.SceneEntry ? ErrorCodes.NpcMissing
+            : !VisibleTo(s, npc) ? ErrorCodes.NpcMissing
             : s.SceneLoading ? ErrorCodes.SwitchingScenes
             : req.SceneConfigId != 0 && req.SceneConfigId != s.SceneEntry ? ErrorCodes.NpcParameter
             : req.Pos != null && !WorldCoreService.Finite(req.Pos) ? ErrorCodes.NpcParameter
             : !Near(s, npc) ? ErrorCodes.NpcTooFar
+            : IsCustomHealer(npc) ? req.InteractionId is not (CustomNpcSettings.HealerDialogue or CustomNpcSettings.HealerInteraction) ? ErrorCodes.NpcParameter : 0
+            : IsCustomHunter(npc) ? req.InteractionId is not (CustomNpcSettings.HunterDialogue or CustomNpcSettings.HunterAccept or CustomNpcSettings.HunterDeliver) ? ErrorCodes.NpcParameter : 0
             : data.Row("NPCConfig", npc.NpcId) is not { } npcRow
                 || !HasInteraction(npcRow, req.InteractionId, npc.Kind) ? ErrorCodes.NpcParameter
             : req.InteractionId == InteractKafraTeleport && !worldData.IsKafraDestination(req.TargetSceneEntry) ? ErrorCodes.NpcParameter : 0;
         if (code == 0 && req.InteractionId is not (InteractPortal or InteractKafraTeleport))
             code = ValidateInteraction?.Invoke(s, npc!, req) ?? 0;
+        var customSettings = code == 0 && (IsCustomHealer(npc!) || IsCustomHunter(npc!)) ? new CustomNpcSettings(options).Read() : null;
+        if (customSettings != null && (IsCustomHealer(npc!) && !customSettings.Healer || IsCustomHunter(npc!) && !customSettings.Hunter)) code = ErrorCodes.FeatureUnavailable;
+        else if (customSettings != null && s.Dead) code = ErrorCodes.UseWhileDead;
         bool ok = code == 0;
         log.LogInformation("{Name} interacts {Interaction} with {Npc} {NpcName} -> {Target}: {Ok}", s.Role?.Name, req.InteractionId,
             npc?.NpcId, npc?.Name, req.TargetSceneEntry, ok ? "ok" : "refused");
         await s.SendGameAsync(NpcInteraction, new NpcInteractionRsp { Result = code, Req = req });
         if (!ok) return;
+        if (IsCustomHealer(npc!))
+        {
+            if (req.InteractionId == CustomNpcSettings.HealerInteraction) await UseCustomHealerAsync(s, npc!, customSettings!);
+            return;
+        }
+        if (IsCustomHunter(npc!))
+        {
+            if (req.InteractionId != CustomNpcSettings.HunterDialogue && CustomHuntAction != null)
+                await CustomHuntAction(s, npc!, req.InteractionId);
+            return;
+        }
         if (req.InteractionId is not (InteractPortal or InteractKafraTeleport) && ApplyInteraction != null)
             await ApplyInteraction(s, npc!, req);
 
