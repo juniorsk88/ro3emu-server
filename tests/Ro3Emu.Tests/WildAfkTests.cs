@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Google.Protobuf;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,6 +9,7 @@ using Romsg;
 using Ro3Emu.Bot;
 using Ro3Emu.Server;
 using Ro3Emu.Server.Accounts;
+using Ro3Emu.Server.Data;
 using Ro3Emu.Server.Game;
 using Ro3Emu.Server.Game.Ownership;
 using Ro3Emu.Server.Maps;
@@ -255,11 +257,24 @@ public sealed class WildAfkTests : IAsyncLifetime
     }
 
     [ClientDataFact]
-    public async Task ManualFieldKillUsesReducedExpAndBonusKillUsesConfiguredHigherTable()
+    public async Task FieldKillsUseHighExpWithoutChangingBonusTimer()
     {
         await using var bot = await InWorld();
         await Eligible(bot);
         await Warp(bot, 10113); // Yoyo is level 30; player level 37 gives a 70% correction for both tables.
+        var data = Service<GameData>();
+        var pools = (Dictionary<string, JsonElement>)data.Table("DropPoolConfig");
+        var groups = (Dictionary<string, JsonElement>)data.Table("DropGroupConfig");
+        foreach (var (pool, group, item) in new[] { ("200021", "9999001", 1000000), ("210021", "9999002", 1000001) })
+        {
+            var row = JsonNode.Parse(pools[pool].GetRawText())!;
+            row["_iDropGroup_16"] = JsonSerializer.SerializeToNode(new[] { int.Parse(group), 1000000, 1, 1 });
+            pools[pool] = JsonSerializer.SerializeToElement(row);
+            groups[group] = JsonSerializer.SerializeToElement(new[] { new { _iWeights = 1, _iMinLevelLimit = 0,
+                _iMaxLevelLimit = 999, _iMinNumber = 1, _iMaxNumber = 1, _kDropItem = item } });
+        }
+        var loot = new TaskCompletionSource<IReadOnlyList<(int Entry, long Count)>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Service<RewardService>().KillDropsGranted.Add((_, _, goods) => { loot.TrySetResult(goods); return Task.CompletedTask; });
 
         async Task<int> KillYoyoAndReadExp(int killCount)
         {
@@ -286,12 +301,25 @@ public sealed class WildAfkTests : IAsyncLifetime
         }
 
         Assert.Equal(37, await State(bot, s => s.Progress!.Level));
-        int reduced = await KillYoyoAndReadExp(1);
-        Assert.Equal(21, reduced); // NPCDropConfig env 0: item 100 x30, corrected by 70%.
+        int manual = await KillYoyoAndReadExp(1);
+        Assert.Equal(207, manual); // high EXP applies even when auto-battle is off.
+        var firstLoot = await loot.Task.WaitAsync(Wait);
+        Assert.Contains(firstLoot, d => d.Entry == 1000000);
+        Assert.DoesNotContain(firstLoot, d => d.Entry == 1000001);
+        await OnLoop(() =>
+        {
+            Session(bot).WildAfk!.Info.HighMultiplierTimeSeconds = 0;
+            Session(bot).WildAfk!.Info.IsHighMagnification = false;
+            return Task.CompletedTask;
+        });
         await Auto(bot, true);
         int bonus = await KillYoyoAndReadExp(2);
-        Assert.Equal(207, bonus); // NPCDropConfig env 1: item 100 x296, same correction.
-        Assert.True(bonus > reduced);
+        Assert.Equal(207, bonus); // the high EXP still applies with no bonus time remaining.
+        var missingHigh = JsonNode.Parse(pools["210021"].GetRawText())!;
+        missingHigh["_iDropGroup_6"] = new JsonArray();
+        pools["210021"] = JsonSerializer.SerializeToElement(missingHigh);
+        await Auto(bot, false);
+        Assert.Equal(21, await KillYoyoAndReadExp(3)); // do not erase normal EXP if the high table has no EXP.
     }
 
     [ClientDataFact]

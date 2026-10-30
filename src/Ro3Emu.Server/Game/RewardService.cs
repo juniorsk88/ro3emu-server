@@ -30,6 +30,7 @@ public sealed class RewardService
     /// <summary>Field AFK selects the enhanced _iDrop table only for qualified ordinary field kills.
     /// Other kills use environment 0, preserving ordinary rewards (localization 10960000077; mapping inferred).</summary>
     public Func<GameSession, MonsterUnit, Task<bool>>? QualifiesForBonus { get; set; }
+    internal Func<GameSession, MonsterUnit, bool>? AlwaysHighFieldExp { get; set; }
     /// <summary>Actual committed kill drops, after EXP correction; excludes GM, quest and other item grants.</summary>
     public List<Func<GameSession, MonsterUnit, IReadOnlyList<(int Entry, long Count)>, Task>> KillDropsGranted { get; } = new();
     internal Action<GameSession, MonsterUnit, RewardSettlement, IReadOnlyList<(int Entry, int Count)>, long, long>? StageAfkKill { get; set; }
@@ -158,7 +159,20 @@ public sealed class RewardService
         // _iNormalDrop remains additive under its own level/map conditions; no numeric multiplier is invented.
         if (Resolve(GameData.Int(npc, "_iDrop")) is var dropId and > 0 && _data.Row("NPCDropConfig", dropId) is { } nd
             && nd.ValueKind == JsonValueKind.Object && nd.TryGetProperty(bonus ? "1" : "0", out var env))
+        {
             RollPools(env, player, drops, monster.Template.Level, pools);
+            // Server policy: keep ordinary loot, but use the Bonus Time EXP for common field monsters.
+            if (!bonus && AlwaysHighFieldExp?.Invoke(player, monster) == true && nd.TryGetProperty("1", out var high))
+            {
+                var highDrops = new List<(int Entry, int Count)>();
+                RollPools(high, player, highDrops, monster.Template.Level);
+                if (highDrops.Any(d => d.Entry == BaseExpItem))
+                {
+                    drops.RemoveAll(d => d.Entry == BaseExpItem);
+                    drops.AddRange(highDrops.Where(d => d.Entry == BaseExpItem));
+                }
+            }
+        }
         if (npc.TryGetProperty("_iNormalDrop", out var normals) && normals.ValueKind == JsonValueKind.Array)
         {
             foreach (var n in normals.EnumerateArray())

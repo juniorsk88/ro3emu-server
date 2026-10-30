@@ -212,6 +212,20 @@ public sealed partial class SurvivorBattleTests
         });
         // Her view follows Bob, so his surroundings stay in her area of interest.
         await Tick(watch.AutoWatchTime + 2);
+        // Tick posts asynchronous match work; wait for that work before inspecting the camera position.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(8);
+        while (DateTime.UtcNow < deadline)
+        {
+            bool followed = false;
+            await OnLoop(() =>
+            {
+                var pos = Session(alice).Position;
+                followed = Math.Abs(pos.X - 520) < 1 && Math.Abs(pos.Z - 520) < 1;
+                return Task.CompletedTask;
+            });
+            if (followed) break;
+            await Task.Delay(20);
+        }
         await OnLoop(() =>
         {
             var a = Session(alice);
