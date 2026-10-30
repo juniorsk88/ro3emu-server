@@ -1,0 +1,158 @@
+--- a/admin.py
++++ b/admin.py
+@@ -1232,7 +1232,7 @@
+                 _s = session_for(self.headers.get("X-Token", ""))
+                 return self.send(200, ledger_list(query, _s["name"]) if _s else {"total": 0, "page": 1, "pages": 1, "rows": [], "summary": {}, "top": []})
+
+-            if path.startswith(("/api/tuning", "/api/monsters", "/api/quests", "/api/npcshops", "/api/maprates", "/api/monsterai", "/api/dropboost")):
++            if path.startswith(("/api/tuning", "/api/monsters", "/api/quests", "/api/npcshops", "/api/maprates", "/api/monsterai", "/api/dropboost", "/api/custom-npcs")):
+                 result = tuning_api.get(path, query)
+                 if result:
+                     return self.send(*result)
+@@ -1535,7 +1535,7 @@
+             return
+
+         try:
+-            if path.startswith(("/api/tuning", "/api/maprates", "/api/monsterai", "/api/dropboost")):
++            if path.startswith(("/api/tuning", "/api/maprates", "/api/monsterai", "/api/dropboost", "/api/custom-npcs")):
+                 sess = session_for(self.headers.get("X-Token", ""))
+                 ctx = {"run": run, "wait_ready": wait_ready, "log": log_activity, "service": SERVICE}
+                 result = tuning_api.post(path, self.read_json(), ctx, sess["name"] if sess else "")
+--- a/tuning_api.py
++++ b/tuning_api.py
+@@ -893,8 +893,54 @@
+     return 200, {"ok": True, "boost": clean}
+
+
++# ------------------------------------------------------------------ custom NPC and job controls
++CUSTOM_DEFAULT = {"healer": True, "hunter": True, "buffLevel": 10, "job50": False}
++
++def custom_npcs_path():
++    return os.path.join(TC.ROOT, "data", "custom-npcs.json")
++
++def custom_npcs_valid(raw):
++    return isinstance(raw, dict) and set(raw) == set(CUSTOM_DEFAULT) and all(
++        type(raw[k]) is bool for k in ("healer", "hunter", "job50")
++    ) and type(raw["buffLevel"]) is int and raw["buffLevel"] in (5, 10)
++
++def custom_npcs_get():
++    path = custom_npcs_path()
++    if not os.path.exists(path):
++        return 200, {"settings": CUSTOM_DEFAULT}
++    try:
++        settings = TC.read_json(path)
++    except (OSError, ValueError):
++        return 500, {"error": "Não foi possível ler as configurações dos NPCs."}
++    if not custom_npcs_valid(settings):
++        return 500, {"error": "As configurações dos NPCs estão inválidas; verifique o arquivo no servidor."}
++    return 200, {"settings": settings}
++
++def custom_npcs_set(body, ctx, who):
++    if not custom_npcs_valid(body):
++        return 400, {"error": "Informe todos os controles e escolha buffs de nível 5 ou 10."}
++    import tempfile
++    path = custom_npcs_path()
++    fd, tmp = tempfile.mkstemp(prefix=".custom-npcs-", dir=os.path.dirname(path))
++    try:
++        os.chmod(tmp, 0o644)
++        with os.fdopen(fd, "w", encoding="utf-8") as f:
++            json.dump(body, f, ensure_ascii=False, indent=2)
++            f.flush()
++            os.fsync(f.fileno())
++        os.replace(tmp, path)
++    finally:
++        if os.path.exists(tmp):
++            os.unlink(tmp)
++    log = ctx.get("log") if isinstance(ctx, dict) else None
++    if log:
++        log("CONFIG", f"Controles de NPCs e classe alterados ({who or 'token'})")
++    return 200, {"ok": True, "settings": body}
++
+ # ------------------------------------------------------------------ dispatch
+ def get(path, query):
++    if path == "/api/custom-npcs":
++        return custom_npcs_get()
+     if path == "/api/tuning":
+         return 200, tuning_state()
+     if path == "/api/tuning/tables":
+@@ -925,6 +971,8 @@
+
+
+ def post(path, body, ctx, who):
++    if path == "/api/custom-npcs":
++        return custom_npcs_set(body, ctx, who)
+     if path == "/api/tuning":
+         return save_tuning(body, ctx, who)
+     if path == "/api/tuning/preview":
+--- a/ui.html
++++ b/ui.html
+@@ -1764,7 +1764,7 @@
+ </script>
+ <script src="/assets/qrcode.js?v=1"></script>
+ <script src="/assets/qrview.js?v=1"></script>
+-<script src="/assets/ajustes.js?v=31"></script>
++<script src="/assets/ajustes.js?v=32"></script>
+ <script src="/assets/loja.js?v=5"></script>
+ <script src="/assets/mapa.js?v=4"></script>
+ <script src="/assets/itens.js?v=3"></script>
+--- a/assets/ajustes.js
++++ b/assets/ajustes.js
+@@ -147,6 +147,7 @@
+     <div class="tn-groups">${GROUPS.map(g => `<section class="tn-group" id="tn-g-${g.id}" aria-label="${esc(g.title)}">
+       <h3>${esc(g.title)}</h3><p class="d">${esc(g.desc)}</p>${g.how ? `<details class="tn-how"><summary>Como funciona (clique para abrir)</summary>${g.how}</details>` : ''}${g.fields.map(f => fieldHtml(g, f)).join('')}</section>`).join('')}</div>
+
++    <div id="customNpcRoot"></div>
+     <div id="boostRoot"></div>
+
+     <div id="aiRoot"></div>
+@@ -174,8 +175,48 @@
+       <button class="btn" type="button" id="tnApply">Aplicar e reiniciar</button>
+     </div>
+   </div></div>`;
+-  renderOverrides(); renderHistory(); markDirty(); schedulePreview(true); loadAi(); loadBoost();
+-}
++  renderOverrides(); renderHistory(); markDirty(); schedulePreview(true); loadAi(); loadBoost(); loadCustomNpcs();
++}
++
++const CUSTOM_NPCS = { saved: null, draft: null };
++function renderCustomNpcs(){
++  const root = $('customNpcRoot'); if (!root || !CUSTOM_NPCS.draft) return;
++  const d = CUSTOM_NPCS.draft, dirty = !same(d, CUSTOM_NPCS.saved);
++  const flag = (id, label) => `<div class="ai-field"><label for="cn-${id}">${label}</label><select id="cn-${id}" data-cn="${id}"><option value="true"${d[id] ? ' selected' : ''}>Ativado</option><option value="false"${d[id] ? '' : ' selected'}>Desativado</option></select></div>`;
++  root.innerHTML = `<section class="tn-group" aria-label="NPCs de Prontera">
++    <h3>NPCs de Prontera</h3>
++    <p class="d">Alterações de presença dos NPCs entram em vigor após reiniciar o servidor.</p>
++    ${flag('healer', 'Curandeira')}${flag('hunter', 'Caçador')}
++    <div class="ai-field"><label for="cn-buffLevel">Nível dos buffs da curandeira<small>Bênção e Aumentar Agilidade duram 10 minutos.</small></label><select id="cn-buffLevel" data-cn="buffLevel"><option value="5"${d.buffLevel === 5 ? ' selected' : ''}>Nível 5</option><option value="10"${d.buffLevel === 10 ? ' selected' : ''}>Nível 10</option></select></div>
++    <div class="row"><span class="grow" id="cnStatus" role="status">${dirty ? 'Há alterações não salvas.' : 'Nenhuma alteração pendente.'}</span><button type="button" class="btn" id="cnSave"${dirty ? '' : ' disabled'}>Salvar configurações</button></div>
++  </section>`;
++}
++async function loadCustomNpcs(){
++  if (!$('customNpcRoot')) return;
++  try {
++    const d = await api('/api/custom-npcs');
++    if (!CUSTOM_NPCS.saved || same(CUSTOM_NPCS.saved, CUSTOM_NPCS.draft)) CUSTOM_NPCS.draft = clone(d.settings);
++    CUSTOM_NPCS.saved = clone(d.settings); renderCustomNpcs();
++  } catch (e) { $('customNpcRoot').innerHTML = `<div class="tn-note tn-warn">NPCs e nível de classe: ${esc(e.message)}</div>`; }
++}
++document.addEventListener('change', e => {
++  const el = e.target.closest && e.target.closest('[data-cn]');
++  if (!el || !$('customNpcRoot')?.contains(el) || !CUSTOM_NPCS.draft) return;
++  CUSTOM_NPCS.draft[el.dataset.cn] = el.dataset.cn === 'buffLevel' ? Number(el.value) : el.value === 'true';
++  const dirty = !same(CUSTOM_NPCS.draft, CUSTOM_NPCS.saved);
++  $('cnStatus').textContent = dirty ? 'Há alterações não salvas.' : 'Nenhuma alteração pendente.';
++  $('cnSave').disabled = !dirty;
++});
++document.addEventListener('click', async e => {
++  if (!e.target.closest('#cnSave') || !CUSTOM_NPCS.draft) return;
++  const button = e.target.closest('#cnSave'); button.disabled = true;
++  const controls = [...$('customNpcRoot').querySelectorAll('select')]; controls.forEach(el => el.disabled = true);
++  try {
++    const result = await api('/api/custom-npcs', { method: 'POST', body: JSON.stringify(CUSTOM_NPCS.draft) });
++    CUSTOM_NPCS.saved = clone(result.settings); CUSTOM_NPCS.draft = clone(result.settings);
++    renderCustomNpcs(); toast('Configurações salvas. Reinicie o servidor para aplicar.');
++  } catch (err) { controls.forEach(el => el.disabled = false); button.disabled = false; toast(err.message, true); }
++});
+
+ /* ---------------------------------------------------------------- IA dos monstros e MVPs
+    Grava <data>/monster-ai.json por /api/monsterai; o servidor relê o arquivo a cada segundo, então vale sem reiniciar. */
