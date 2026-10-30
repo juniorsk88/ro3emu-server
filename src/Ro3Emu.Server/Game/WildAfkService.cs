@@ -69,6 +69,7 @@ public sealed class WildAfkService : IGameTicker
         scene.Loaded.Add(s => ReconcileAsync(s));
         combat.PlayerDied.Add(s => SuspendAsync(s));
         rewards.QualifiesForBonus = BeforeKillAsync;
+        rewards.AlwaysHighFieldExp = (s, monster) => Field(s) && Ordinary(monster);
         rewards.StageAfkKill = StageAfkKill;
         rewards.KillDropsGranted.Add(DropsGrantedAsync);
         daily.BeforeReset = BeforeDailyResetAsync;
