@@ -257,6 +257,8 @@ public sealed partial class CombatService
                         {
                             long shield = first ? SkillShield(script, row, stats) : 0;
                             if (shield > 0) await _buffs.AddSupportAsync(recipient, id, duration, castingRole.Id, shield);
+                            else if (first && script is ("Blessing" or "IncreaseAGI"))
+                                await _buffs.AddPlayerSupportAsync(recipient, id, duration, castingRole.Id, 2);
                             else await _buffs.AddAsync(recipient, id, duration, castingRole.Id);
                         }
                     }

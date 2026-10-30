@@ -637,6 +637,15 @@ public sealed partial class SkillCombatTests : IAsyncLifetime
                     Assert.Equal(0, d.Damage);
                 });
             }
+            await Loop.InvokeAsync(() =>
+            {
+                var buff = Assert.Single(Session("bob").Buffs, b => b.ConfigId == skill);
+                if (skill == 1400101)
+                    Assert.Equal(new[] { (1L, 2d), (5L, 2d), (4L, 2d) }, buff.Changes);
+                else
+                    Assert.Equal(new[] { (2L, 2d), (1131L, 200d), (1141L, 200d) }, buff.Changes);
+                return Task.CompletedTask;
+            });
             await Task.Delay(700);
         }
     }

@@ -101,6 +101,9 @@ public sealed partial class BuffService : IGameTicker
     public Task AddAsync(GameSession p, int configId, int durationMs, long sourceId) =>
         AddCoreAsync(p, configId, durationMs, sourceId, null);
 
+    internal Task AddPlayerSupportAsync(GameSession p, int configId, int durationMs, long sourceId, double multiplier) =>
+        AddCoreAsync(p, configId, durationMs, sourceId, null, attributeMultiplier: multiplier);
+
     /// <summary>Set a territory-owned pile count from the authoritative occupation/fatigue state (inferred).
     /// Ordinary AddAsync still follows BuffConfig stack and multi-source rules.</summary>
     public Task SetPileCountAsync(GameSession p, int configId, int durationMs, long sourceId, int pileCount) =>

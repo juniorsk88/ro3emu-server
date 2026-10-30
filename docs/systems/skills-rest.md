@@ -21,6 +21,8 @@ The set contains **34** messages: **15 done, 17 partial, 2 missing, 0 stub**. Al
 
 Storm Gust (`SkillConfig` 12108) describes five Water waves over four seconds: each wave is MATK times the row's displayed percentage plus its flat amount (level 1: 5.5% + 67; level 10: 10% + 130), before defense, element and other modifiers. `_kLogicData` names a 1000 ms interval and 5000 ms ground-object lifetime. Each wave applies the row's 2% Freeze chance and Slow. `_kShowDmg [3,3]` is presentation: `LC_DamageHelper.DealJumpWord` divides one hit among its displayed numbers, and EffectData 1210804 enables multistage display. Neither the skill description nor the configured buff rows establish knockback. Drag-circle PvP targets use the chosen area, as monster targets do. `StormGustDealsFiveConfiguredWavesAndSplitsOnlyTheDisplay` and `StormGustHitsHostilePlayersInTheChosenArea` cover the wire result.
 
+**Server customization:** player casts of Blessing (`14001`) and Increase AGI (`14010`) double the primary buff's configured attribute changes, without changing its duration or secondary buffs. This is the owner's balance choice; client descriptions still show the original values.
+
 ## Inferred mechanics
 
 The documents linked above enumerate plan entitlement/reset/serialization, buff stacking/status/death, resource and dynamic-parameter policies. Additional combat inferences are:
