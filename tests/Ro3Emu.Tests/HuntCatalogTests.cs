@@ -118,6 +118,9 @@ public sealed partial class MapTests
             });
             await Gm("alice", "!warp 10100 169.5 202.5");
             view = (await FollowSceneChange(alice)).Npcs;
+            if (!view.Bases.Any(n => n.EntityTemplateID == CustomNpcSettings.HunterNpc))
+                view = await Next(alice, GameAoiSink.SyncAoiView, AoIViewChangeData.Parser,
+                    v => v.Bases.Any(n => n.EntityTemplateID == CustomNpcSettings.HunterNpc));
             hunter = Assert.Single(view.Bases, n => n.EntityTemplateID == CustomNpcSettings.HunterNpc);
             await alice.SendGameAsync(SceneService.NpcInteraction, new NpcInteractionReq
             { NpcUid = (long)hunter.Uuid, InteractionId = CustomNpcSettings.HunterDeliver, SceneConfigId = Prontera });

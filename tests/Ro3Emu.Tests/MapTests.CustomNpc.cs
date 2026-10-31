@@ -22,6 +22,9 @@ public sealed partial class MapTests
         {
             var npc = Assert.Single(map.Npcs, n => n.NpcId == id);
             Assert.True(map.Nav.IsWalkable(npc.X, npc.Y, npc.Z), $"NPC {id} is not on walkable ground");
+            var entity = SceneService.NpcEntity(npc);
+            Assert.Equal(id == CustomNpcSettings.HealerNpc ? 180f : 90f, entity.Face);
+            Assert.Equal(entity.Face, entity.MovementInfo.Face);
         }
     }
 

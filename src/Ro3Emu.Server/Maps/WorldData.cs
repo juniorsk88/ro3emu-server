@@ -277,16 +277,16 @@ public sealed partial class WorldData(IOptions<ServerOptions> options, GameData 
         if (sceneEntry == Game.CustomNpcSettings.Prontera)
         {
             var custom = new Game.CustomNpcSettings(options).Read();
-            foreach (var (enabled, id, template, label, x, z) in new[]
+            foreach (var (enabled, id, template, label, x, z, face) in new[]
             {
-                (custom.Healer, Game.CustomNpcSettings.HealerNpc, Game.CustomNpcSettings.HealerTemplate, "Curandeira", 156.5f, 190.5f),
-                (custom.Hunter, Game.CustomNpcSettings.HunterNpc, Game.CustomNpcSettings.HunterTemplate, "Caçador", 169.5f, 202.5f),
+                (custom.Healer, Game.CustomNpcSettings.HealerNpc, Game.CustomNpcSettings.HealerTemplate, "Curandeira", 156.5f, 190.5f, 180f),
+                (custom.Hunter, Game.CustomNpcSettings.HunterNpc, Game.CustomNpcSettings.HunterTemplate, "Caçador", 169.5f, 202.5f, 90f),
             })
             {
                 if (!enabled || data.Row("NPCConfig", template) is not { } npcRow) continue;
                 float y = map.Nav?.WalkHeight(x, z, 0.2f) ?? 0.2f;
                 npcs.Add(new WorldNpc(NpcUidBase | sceneEntry << 16 | (long)npcs.Count, sceneEntry, WorldNpcKind.Npc,
-                    id, label, (int)new Data.Config.NPCConfig(npcRow).Camp, x, y, z, 0, npcRow));
+                    id, label, (int)new Data.Config.NPCConfig(npcRow).Camp, x, y, z, face, npcRow));
             }
         }
         var spawnGroups = LoadSpawnGroups(se);
