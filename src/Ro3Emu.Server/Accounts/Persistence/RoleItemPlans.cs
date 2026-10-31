@@ -572,7 +572,7 @@ internal static class RoleColumns
 {
     internal static readonly HashSet<string> Blobs = new(StringComparer.Ordinal)
     {
-        "settings", "guides", "emoji_play", "achievements", "achievement_runtime", "adventure_group", "library", "card_plans", "shop", "trade_info", "stalls_info", "daily",
+        "settings", "job_history", "guides", "emoji_play", "achievements", "achievement_runtime", "adventure_group", "library", "card_plans", "shop", "trade_info", "stalls_info", "daily",
         "new_activities", "activity_runtime", "timed_activity", "timed_battle", "training", "guild_challenge",
         "lottery", "tower", "dungeons", "territory_wars", "territory_escort", "lifejob", "life_restrict",
         "life_runtime", "season_talent", "season_page", "season_page_meta", "season_refine", "pets", "mounts",
@@ -940,7 +940,7 @@ internal sealed class RoleProgressReadPlan(long role) : DbReadPlan
     internal override string Label => "role/read-progress";
     internal override object Execute(SqliteConnection db, SqliteTransaction tx)
     {
-        using var cmd = DbSql.Command(db, tx, "SELECT career,level,job_level,exp,job_exp,stats,bonus_points,currency,starter_kit,skills,skill_bar,paragon_level,paragon_exp FROM role WHERE id=$id");
+        using var cmd = DbSql.Command(db, tx, "SELECT career,level,job_level,exp,job_exp,stats,bonus_points,currency,starter_kit,skills,skill_bar,paragon_level,paragon_exp,job_history FROM role WHERE id=$id");
         cmd.Parameters.AddWithValue("$id", role);
         using var row = cmd.ExecuteReader();
         if (!row.Read()) throw new InvalidOperationException($"no role {role}");

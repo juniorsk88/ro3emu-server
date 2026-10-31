@@ -47,6 +47,12 @@ public static partial class EconomySnapshotReader
     {
         private void ValidateRoleJson(string name, JsonElement root, string key)
         {
+            if (name == "job_history")
+            {
+                _ = root.Deserialize<Dictionary<int, int>>(StrictJson)
+                    ?? throw new JsonException("Null job history.");
+                return;
+            }
             if (name == "pet_books")
             {
                 _ = root.Deserialize<Dictionary<int, Dictionary<int, long>>>(StrictJson)

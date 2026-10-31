@@ -35,6 +35,7 @@ internal sealed class RoleSchemaPlan : DbPlan
         SchemaSql.AddColumn(db, tx, "role", "settings", "BLOB");
         // Progression (see RoleProgress); level and career are the columns above.
         SchemaSql.AddColumn(db, tx, "role", "job_level", "INTEGER NOT NULL DEFAULT 1");
+        SchemaSql.AddColumn(db, tx, "role", "job_history", "BLOB");
         SchemaSql.AddColumn(db, tx, "role", "exp", "INTEGER NOT NULL DEFAULT 0");
         SchemaSql.AddColumn(db, tx, "role", "job_exp", "INTEGER NOT NULL DEFAULT 0");
         SchemaSql.AddColumn(db, tx, "role", "stats", "TEXT NOT NULL DEFAULT '1,1,1,1,1,1'");

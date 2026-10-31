@@ -94,6 +94,7 @@ namespace Ro3Emu.ClientHooks
         public void Obf_mkD()
         {
             Detach();
+            Job50Client.Reset();
             while (_inbound.TryDequeue(out _)) { }
             while (_status.TryDequeue(out _)) { }
             _requestCallback = null;
@@ -142,6 +143,7 @@ namespace Ro3Emu.ClientHooks
 
         private void OnMessage(uint msgId, ReadOnlyMemory<byte> memory)
         {
+            if (msgId == Job50Client.State) { Job50Client.OnState(memory); return; }
             if (msgId == Diagnostics.MsgId)
             {
                 _diagnostics.Enqueue(System.Text.Encoding.UTF8.GetString(memory.ToArray()));

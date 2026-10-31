@@ -359,6 +359,7 @@ public sealed partial class TimedBattleService
         foreach (var (entry, amount) in source.Currency) copy.Currency[entry] = amount;
         foreach (var (id, level) in source.Skills) copy.Skills[id] = level;
         foreach (var (slot, id) in source.SkillBar) copy.SkillBar[slot] = id;
+        foreach (var (rank, level) in source.CompletedJobLevels) copy.CompletedJobLevels[rank] = level;
         return copy;
     }
 }

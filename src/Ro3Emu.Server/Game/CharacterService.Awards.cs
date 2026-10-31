@@ -236,7 +236,7 @@ public sealed partial class CharacterService
         AddVirtualReward(notification, BaseExpItem, baseExp);
         AddVirtualReward(notification, JobExpItem, jobExp);
         int oldLevel = staged.Level, oldJob = staged.JobLevel;
-        if (baseExp > 0 || jobExp > 0) ApplyExp(staged, baseExp, jobExp);
+        if (baseExp > 0 || jobExp > 0) ApplyExp(staged, baseExp, jobExp, session.Job50Client);
         // TaskService can hold unsaved in-memory objective progress. Compare that snapshot above, then
         // use the persisted blob as the SQLite CAS baseline for this single award transaction.
         byte[]? persistedTasks = expectedTasks == null ? null : roles.LoadTasks(session.Role.Id);
@@ -359,7 +359,7 @@ public sealed partial class CharacterService
         return true;
     }
 
-    private void ApplyExp(RoleProgress p, long baseExp, long jobExp)
+    private void ApplyExp(RoleProgress p, long baseExp, long jobExp, bool clientReady)
     {
         p.Exp = checked(p.Exp + baseExp);
         for (long need; p.Level < MaxLevel && (need = BaseExpNeed(p.Level)) > 0 && p.Exp >= need;)
@@ -376,7 +376,7 @@ public sealed partial class CharacterService
         }
         p.JobExp = checked(p.JobExp + jobExp);
         SkipFreeJobLevels(p);
-        int maxJob = MaxJobLevel(p.Career);
+        int maxJob = MaxJobLevel(p.Career, clientReady);
         for (long need; p.JobLevel < maxJob && (need = JobExpNeed(p.Career, p.JobLevel)) > 0 && p.JobExp >= need;)
         {
             p.JobExp -= need;
@@ -409,6 +409,7 @@ public sealed partial class CharacterService
         foreach (var (key, value) in source.Currency) result.Currency[key] = value;
         foreach (var (key, value) in source.Skills) result.Skills[key] = value;
         foreach (var (key, value) in source.SkillBar) result.SkillBar[key] = value;
+        foreach (var (key, value) in source.CompletedJobLevels) result.CompletedJobLevels[key] = value;
         return result;
     }
 
@@ -423,6 +424,7 @@ public sealed partial class CharacterService
         target.Currency.Clear(); foreach (var (key, value) in source.Currency) target.Currency[key] = value;
         target.Skills.Clear(); foreach (var (key, value) in source.Skills) target.Skills[key] = value;
         target.SkillBar.Clear(); foreach (var (key, value) in source.SkillBar) target.SkillBar[key] = value;
+        target.CompletedJobLevels.Clear(); foreach (var (key, value) in source.CompletedJobLevels) target.CompletedJobLevels[key] = value;
     }
 
     private static void CopyItem(InvItem target, InvItem source)

@@ -164,6 +164,13 @@ public sealed class TowerPetCombatTests : IAsyncLifetime
         Assert.Equal(0, Service<BuffService>().ShieldAmount(caster));
         // Review regression: drive the same shield through the actual monster -> player commit path,
         // not just BuffService.AbsorbAsync. Both the wire absorption field and HP must agree.
+        await Run(() =>
+        {
+            // Natural regeneration must not race the damage assertion during this controlled fight.
+            s.StatusBits |= 1L << 15;
+            s.LastCombatMs = long.MaxValue;
+            return Task.CompletedTask;
+        });
         long ownerHp = Service<CharacterService>().Stats(s)[2000];
         await Run(() => Service<MonsterService>().Attack!(attacker, s));
         var ownerFirst = await Next(bot, CombatService.SkillHit, SkillHitInfo.Parser,

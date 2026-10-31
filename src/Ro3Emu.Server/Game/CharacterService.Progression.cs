@@ -13,7 +13,13 @@ public sealed partial class CharacterService
 {
     // ---- level, exp, stat points ----
 
-    private int MaxJobLevel(int career) => (int)(JobLvRow(career, 1) is { } row ? GameData.Int(row, "_iMaxJobLv") : 10);
+    private int MaxJobLevel(int career, bool clientReady = false)
+    {
+        int max = (int)(JobLvRow(career, 1) is { } row ? GameData.Int(row, "_iMaxJobLv") : 10);
+        if (!clientReady || JobRank(career) <= 1 || max != 40 || !new CustomNpcSettings(options).Read().Job50) return max;
+        long previous = OriginalJobExpNeed(career, 39), last = OriginalJobExpNeed(career, 40);
+        return previous > 0 && last >= previous ? 50 : max;
+    }
 
     private int JobRank(int career) => (int)(data.Row("JobConfig", career) is { } job ? Math.Max(1, GameData.Int(job, "_iJobRank")) : 1);
 
@@ -21,10 +27,14 @@ public sealed partial class CharacterService
 
     private long BaseExpNeed(int level) => data.Row("BaseLvConfig", level) is { } row ? GameData.Int(row, "_iBaseExp") : 0;
 
-    private long JobExpNeed(int career, int jobLevel) => JobLvRow(career, jobLevel) is { } row ? GameData.Int(row, "_iJobeExp") : 0;
+    private long OriginalJobExpNeed(int career, int jobLevel) => JobLvRow(career, jobLevel) is { } row ? GameData.Int(row, "_iJobeExp") : 0;
 
-    internal (long Base, long Job) HuntReward(RoleProgress progress) =>
-        (checked(BaseExpNeed(progress.Level) * 3 / 10), progress.JobLevel >= MaxJobLevel(progress.Career)
+    private long JobExpNeed(int career, int jobLevel) => jobLevel is >= 41 and <= 49 && JobRank(career) > 1
+        ? Job50Curve.ExpNeed(OriginalJobExpNeed(career, 39), OriginalJobExpNeed(career, 40), jobLevel)
+        : OriginalJobExpNeed(career, jobLevel);
+
+    internal (long Base, long Job) HuntReward(RoleProgress progress, bool clientReady = false) =>
+        (checked(BaseExpNeed(progress.Level) * 3 / 10), progress.JobLevel >= MaxJobLevel(progress.Career, clientReady)
             ? 0 : checked(JobExpNeed(progress.Career, progress.JobLevel) * 3 / 10));
 
     /// <summary>All stat points a role has earned: the starting 48, BaseLvConfig._iStatusPoint per level reached, GM extras.</summary>
@@ -62,7 +72,7 @@ public sealed partial class CharacterService
         p.Exp = 0;
         if (jobLevel is { } jl)
         {
-            p.JobLevel = Math.Clamp(jl, 1, MaxJobLevel(p.Career));
+            p.JobLevel = Math.Clamp(jl, 1, MaxJobLevel(p.Career, session.Job50Client));
             p.JobExp = 0;
         }
         SkipFreeJobLevels(p);
@@ -84,7 +94,7 @@ public sealed partial class CharacterService
         // BaseExpAddConfig catch-up bonus below the server level (CharacterService.LevelRules).
         baseExp = WithPursueBonus(p.Level, Math.Max(0, baseExp));
         var staged = CloneProgress(p);
-        ApplyExp(staged, baseExp, Math.Max(0, jobExp));
+        ApplyExp(staged, baseExp, Math.Max(0, jobExp), session.Job50Client);
         var builder = roles.NewTransaction();
         builder.ItemDelta(session.Role!.Id, session.Items, session.Items);
         builder.Progress(session.Role!.Id, staged);
@@ -290,7 +300,7 @@ public sealed partial class CharacterService
         if (data.Row("JobConfig", career) == null) throw new ArgumentException("unknown job");
         using (await LockAsync(session))
         {
-            await CommitJobAsync(session, career, Math.Min(session.Progress!.JobLevel, MaxJobLevel(career)));
+            await CommitJobAsync(session, career, Math.Min(session.Progress!.JobLevel, MaxJobLevel(career, session.Job50Client)));
             // The 31176 reply remains before the base/model publication, after the durable outcome.
             await session.SendGameAsync(PlayerTransformJob, new PlayerTransformJobResp { Result = 0, JobId = career });
             await PublishJobAsync(session);
@@ -304,11 +314,18 @@ public sealed partial class CharacterService
     private async Task CommitJobAsync(GameSession session, int career, int jobLevel)
     {
         var progress = CloneProgress(session.Progress!);
+        int previousRank = JobRank(progress.Career);
+        Dictionary<string, byte[]>? blobs = null;
+        if (previousRank > 1 && previousRank != JobRank(career) && progress.JobLevel > 40)
+        {
+            progress.CompletedJobLevels[previousRank] = Math.Max(progress.CompletedJobLevels.GetValueOrDefault(previousRank), progress.JobLevel);
+            blobs = new Dictionary<string, byte[]> { ["job_history"] = JsonSerializer.SerializeToUtf8Bytes(progress.CompletedJobLevels) };
+        }
         progress.Career = career;
         progress.JobLevel = jobLevel;
         progress.JobExp = 0;
         SkipFreeJobLevels(progress);
-        await CommitCharacterAsync(session, "job", progress: progress, apply: () =>
+        await CommitCharacterAsync(session, "job", progress: progress, blobs: blobs, apply: () =>
         {
             session.Role = session.Role! with { Career = career };
             session.Speed = data.JobAttributes(career).GetValueOrDefault(Speed, RoleSessionService.DefaultSpeed);

@@ -156,6 +156,11 @@ public sealed class SkillService
                 if (_data.Row("JobLvConfig", rank * 100L + lv) is not { } row) break;
                 earned += (int)GameData.Int(row, "_iSkillPoint");
             }
+            if (rank > 1)
+            {
+                int reached = rank == currentRank ? p.JobLevel : p.CompletedJobLevels.GetValueOrDefault(rank, 40);
+                earned += Math.Clamp(reached - 40, 0, 10);
+            }
             points[rank] = earned;
         }
         foreach (var (group, career) in Tree(p.Career))

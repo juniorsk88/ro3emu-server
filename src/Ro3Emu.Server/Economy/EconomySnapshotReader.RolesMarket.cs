@@ -132,6 +132,14 @@ public static partial class EconomySnapshotReader
                 case BlobFormat.Mailbox: ReadMailbox(doc.RootElement, role, key); break;
                 case BlobFormat.TerritoryRole: ReadTerritoryRole(doc.RootElement, role, key); break;
                 case BlobFormat.Json:
+                    if (name == "job_history")
+                    {
+                        if (doc.RootElement.ValueKind != JsonValueKind.Object) throw new JsonException("Expected job history object.");
+                        foreach (var entry in doc.RootElement.EnumerateObject())
+                            if (!int.TryParse(entry.Name, out int rank) || rank is < 2 or > 5
+                                || !entry.Value.TryGetInt32(out int level) || level is < 41 or > 50)
+                                throw new JsonException("Invalid completed job level.");
+                    }
                     if (name == "guild_challenge") Fields(doc.RootElement, "Granted");
                     if (name == "activity_runtime") ClassifyActivityRuntime(doc.RootElement, key);
                     break;

@@ -111,7 +111,11 @@ namespace Ro3Emu.ClientHooks
                 {
                     if (!Present()) Debug.Log("[Ro3Emu.Pass] config reloaded; challenge rows " + (Inject() ? "added again" : "NOT added"));
                     else if (Configs() is { } dbm) { NpcShops.Inject(dbm); CustomNpcClient.Inject(dbm, _global); } // DialogueConfig can be released on its own
-                    if (Configs() is { } loaded && HuntClient.Inject(loaded, _global)) CustomNpcClient.Hello(loaded, _global);
+                    if (Configs() is { } loaded)
+                    {
+                        if (HuntClient.Inject(loaded, _global)) CustomNpcClient.Hello(loaded, _global);
+                        Job50Client.Tick(loaded, _global);
+                    }
                 }
                 catch (Exception e) { Debug.LogWarning("[Ro3Emu.Pass] row check failed: " + e.Message); }
             }
@@ -123,7 +127,11 @@ namespace Ro3Emu.ClientHooks
         private static void Reload(Obf_R.Obf_ff self)
         {
             _originalReload?.Obf_HuA(self);
-            try { Debug.Log("[Ro3Emu.Pass] configs reloaded; challenge rows " + (Inject() ? "added again" : "NOT added")); }
+            try
+            {
+                Debug.Log("[Ro3Emu.Pass] configs reloaded; challenge rows " + (Inject() ? "added again" : "NOT added"));
+                if (Configs() is { } manager) Job50Client.Tick(manager, _global);
+            }
             catch (Exception e) { Debug.LogWarning("[Ro3Emu.Pass] rows after reload failed: " + e.Message); }
         }
 

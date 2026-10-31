@@ -230,6 +230,7 @@ public sealed class GameSession(PhonestChannel channel, TrafficLog traffic)
     /// <summary>The client has the character's level-up effect as an effect row (Ro3Emu.ClientHooks.LevelUpEffect sent 77017): a monster's evolution can play it.</summary>
     public bool LevelUpFx { get; set; }
     internal bool CustomNpcRows { get; set; }
+    internal bool Job50Client { get; set; }
     public PronteraDefenseService.State? Defense { get; set; }
     public TimedBattleService.State? TimedBattle { get; set; }
     public int EventFaction { get; set; }

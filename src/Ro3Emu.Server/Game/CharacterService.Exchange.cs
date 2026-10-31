@@ -182,7 +182,7 @@ public sealed partial class CharacterService
         if (lifeUse is null || !lifeUse.Active || !ReferenceEquals(lifeUse.Session, session) || lifeUse.Committed) lifeUse = null;
         if (baseExp < 0 || jobExp < 0) throw new ArgumentOutOfRangeException(nameof(baseExp));
         var nextProgress = CloneProgress(session.Progress!);
-        if (baseExp > 0 || jobExp > 0) ApplyExp(nextProgress, baseExp, jobExp);
+        if (baseExp > 0 || jobExp > 0) ApplyExp(nextProgress, baseExp, jobExp, session.Job50Client);
         var need = cost.GroupBy(c => c.Entry).Select(g => (Entry: g.Key, Count: g.Sum(c => c.Count))).ToList();
         long Available(int entry) => CountOf(session, entry) -
             (session.Items.Any(i => i.Guid == reservedGuid && i.Grid == 0 && i.Entry == entry && !EmblemService.IsReserved(session, i) && !TotemService.IsReserved(session, i)) ? 1 : 0);

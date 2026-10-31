@@ -1,0 +1,24 @@
+--- a/ui.html
++++ b/ui.html
+@@ -1764,7 +1764,7 @@
+ </script>
+ <script src="/assets/qrcode.js?v=1"></script>
+ <script src="/assets/qrview.js?v=1"></script>
+-<script src="/assets/ajustes.js?v=32"></script>
++<script src="/assets/ajustes.js?v=33"></script>
+ <script src="/assets/loja.js?v=5"></script>
+ <script src="/assets/mapa.js?v=4"></script>
+ <script src="/assets/itens.js?v=3"></script>
+--- a/assets/ajustes.js
++++ b/assets/ajustes.js
+@@ -185,8 +185,8 @@
+   const flag = (id, label) => `<div class="ai-field"><label for="cn-${id}">${label}</label><select id="cn-${id}" data-cn="${id}"><option value="true"${d[id] ? ' selected' : ''}>Ativado</option><option value="false"${d[id] ? '' : ' selected'}>Desativado</option></select></div>`;
+   root.innerHTML = `<section class="tn-group" aria-label="NPCs de Prontera">
+     <h3>NPCs de Prontera</h3>
+-    <p class="d">Alterações de presença dos NPCs entram em vigor após reiniciar o servidor.</p>
+-    ${flag('healer', 'Curandeira')}${flag('hunter', 'Caçador')}
++    <p class="d">Alterações de presença dos NPCs entram em vigor após reiniciar o servidor. O limite de classe pode mudar após salvar; o Aprendiz continua no nível 10.</p>
++    ${flag('healer', 'Curandeira')}${flag('hunter', 'Caçador')}${flag('job50', 'Permitir classe até o nível 50')}
+     <div class="ai-field"><label for="cn-buffLevel">Nível dos buffs da curandeira<small>Bênção e Aumentar Agilidade duram 10 minutos.</small></label><select id="cn-buffLevel" data-cn="buffLevel"><option value="5"${d.buffLevel === 5 ? ' selected' : ''}>Nível 5</option><option value="10"${d.buffLevel === 10 ? ' selected' : ''}>Nível 10</option></select></div>
+     <div class="row"><span class="grow" id="cnStatus" role="status">${dirty ? 'Há alterações não salvas.' : 'Nenhuma alteração pendente.'}</span><button type="button" class="btn" id="cnSave"${dirty ? '' : ' disabled'}>Salvar configurações</button></div>
+   </section>`;

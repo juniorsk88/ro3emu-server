@@ -20,7 +20,7 @@ public static partial class EconomySnapshotReader
     // Every persisted role BLOB must be classified. Presence of a new BLOB column is never silently ignored.
     private static readonly Dictionary<string, BlobFormat> RoleBlobs = new(StringComparer.Ordinal)
     {
-        ["settings"] = BlobFormat.Protobuf, ["skill_plans"] = BlobFormat.Protobuf,
+        ["settings"] = BlobFormat.Protobuf, ["skill_plans"] = BlobFormat.Protobuf, ["job_history"] = BlobFormat.Json,
         ["tasks"] = BlobFormat.Protobuf, ["task_runtime"] = BlobFormat.Json,
         ["task_followup"] = BlobFormat.StringSet,
         ["guides"] = BlobFormat.Protobuf, ["emoji_play"] = BlobFormat.Protobuf,

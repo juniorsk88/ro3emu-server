@@ -6,6 +6,19 @@ namespace Ro3Emu.Tests;
 public sealed class S3EconomyDecoderTests
 {
     [Fact]
+    public void JobHistoryIsMetadataAndRejectsInvalidLevels()
+    {
+        using var f = new Fixture();
+        f.Insert("INSERT INTO role(id,currency,job_history) VALUES(101,'1:7',$0)", B("{\"2\":50}"));
+        var snapshot = EconomySnapshotReader.Read(f.PathName, Catalog, "realm-fixture");
+        Assert.DoesNotContain(snapshot.Issues, x => x.Key == "role/101/job_history");
+        Assert.Equal(7, Assert.Single(snapshot.Holdings).Quantity);
+        f.Insert("UPDATE role SET job_history=$0 WHERE id=101", B("{\"2\":999}"));
+        Assert.Contains(EconomySnapshotReader.Read(f.PathName, Catalog, "realm-fixture").Issues,
+            x => x.Kind == EconomyIssueKind.Corruption && x.Key == "role/101/job_history");
+    }
+
+    [Fact]
     public void TaskFollowupSourcesAreRecoveryEvidenceWithoutDuplicateAssets()
     {
         using var f = new Fixture();
@@ -68,7 +81,7 @@ public sealed class S3EconomyDecoderTests
                 CREATE TABLE server_state(key TEXT PRIMARY KEY,value TEXT NOT NULL);
                 """);
             // Hand-authored E00 role blob inventory, based on CoreSchemaPlans rather than reader reflection.
-            foreach (string column in ("settings skill_plans tasks task_runtime task_followup guides emoji_play achievements achievement_runtime adventure_group library card_plans shop trade_info stalls_info " +
+            foreach (string column in ("settings skill_plans job_history tasks task_runtime task_followup guides emoji_play achievements achievement_runtime adventure_group library card_plans shop trade_info stalls_info " +
                 "auction guild_info guild_challenge pet_books daily new_activities activity_runtime timed_activity timed_battle " +
                 "training lottery tower wild_afk dungeons territory_escort lifejob life_restrict life_runtime season_talent " +
                 "season_page season_page_meta season_refine equip_levels equip_plans auto_decompose bag_state stat_plans " +

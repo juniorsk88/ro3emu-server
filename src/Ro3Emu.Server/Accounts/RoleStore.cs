@@ -25,6 +25,8 @@ public sealed class RoleProgress
     public int JobLevel { get; set; } = 1;
     public long Exp { get; set; }
     public long JobExp { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    internal Dictionary<int, int> CompletedJobLevels { get; } = new();
     public int[] Stats { get; } = [1, 1, 1, 1, 1, 1];
     public int BonusPoints { get; set; }
     public Dictionary<int, long> Currency { get; } = new();
@@ -690,6 +692,16 @@ public sealed class RoleStore(AccountStore accounts)
         }
         ReadIntMap(r.GetString(9), p.Skills);
         ReadIntMap(r.GetString(10), p.SkillBar);
+        if (!r.IsDBNull(13))
+        {
+            var history = JsonSerializer.Deserialize<Dictionary<int, int>>((byte[])r.GetValue(13))
+                ?? throw new InvalidDataException("Invalid job level history.");
+            foreach (var (rank, level) in history)
+            {
+                if (rank is < 2 or > 5 || level is < 41 or > 50) throw new InvalidDataException("Invalid completed job level.");
+                p.CompletedJobLevels[rank] = level;
+            }
+        }
         return p;
     }
 

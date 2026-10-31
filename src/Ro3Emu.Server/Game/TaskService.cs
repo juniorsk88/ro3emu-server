@@ -655,7 +655,7 @@ public sealed partial class TaskService
             // 5021 is the authoritative season snapshot sent to this session, also used by client previews.
             int? playBook = session.Synced.GetValueOrDefault(SeasonService.SeasonSync) is DBSeasonInfo { Current: { } current }
                 ? (int)current.PlayBookId : null;
-            var huntReward = HuntCatalog.IsHunt(id) ? _character.HuntReward(session.Progress!) : (Base: def.Exp, Job: 0L);
+            var huntReward = HuntCatalog.IsHunt(id) ? _character.HuntReward(session.Progress!, session.Job50Client) : (Base: def.Exp, Job: 0L);
             var plan = HuntCatalog.IsHunt(id)
                 ? new AwardPlan(0, 0, huntReward.Job > 0 ? [new AwardGrant(CharacterService.JobExpItem, checked((int)huntReward.Job))] : [])
                 : _awards.Resolve(session, def.Award, playBook);

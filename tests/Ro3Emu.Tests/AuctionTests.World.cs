@@ -276,6 +276,10 @@ public sealed partial class AuctionContentTests
             || guildLots.Any(id => Service<AuctionStore>().Get(id)!.Type == AuctionType.Guild
                 && Service<AuctionStore>().Get(id)!.State != AuctionState.Settled)); i++)
             await Task.Delay(50);
+        var worldAfterRestart = Service<AuctionStore>().Get(worldLot)!;
+        Assert.True(worldAfterRestart.State == AuctionState.Settled,
+            $"World lot was not settled: state={worldAfterRestart.State}, lastBid={worldAfterRestart.LastBid}, "
+            + $"recovery={worldAfterRestart.SettlementRecoveryReason}");
         Assert.Equal(bobId, Service<AuctionStore>().Get(eventLot)!.Winner);
         Assert.Equal(bobId, Service<AuctionStore>().Get(worldLot)!.Winner);
         var movedEnds = guildLots.Select(id => Service<AuctionStore>().Get(id)!)

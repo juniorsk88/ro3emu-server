@@ -66,7 +66,7 @@ public sealed class RoleSnapshots
     // Columns read by RoleProgressReadPlan: a write of any of them, or of the "progress" part, stales progress.
     private static readonly HashSet<string> ProgressColumns = new(StringComparer.Ordinal)
         { "career", "level", "job_level", "exp", "job_exp", "stats", "bonus_points", "currency", "starter_kit", "skills", "skill_bar",
-          "paragon_level", "paragon_exp" };
+          "paragon_level", "paragon_exp", "job_history" };
 
     private sealed class Entry(RoleSnapshot snapshot)
     {

@@ -1,11 +1,30 @@
 using Ro3Emu.Server.Maps;
 using Romsg;
+using System.Text;
+using Ro3Emu.Server.Data.Config;
 
 namespace Ro3Emu.Server.Game;
 
 public sealed partial class SceneService
 {
     internal const uint CustomNpcHello = 77022;
+    internal const uint Job50Hello = 77023, Job50State = 77024;
+
+    internal Task Job50HelloAsync(GameSession session)
+    {
+        session.Job50Client = true;
+        var job = data.Row("JobConfig", session.Progress?.Career ?? 0);
+        var values = new List<string> { new CustomNpcSettings(options).Read().Job50 ? "1" : "0",
+            job is { } current ? new JobConfig(current).JobRank.ToString() : "1", (session.Progress?.JobLevel ?? 1).ToString() };
+        for (int rank = 2; rank <= 5; rank++)
+        {
+            var before = data.Row("JobLvConfig", rank * 100L + 39);
+            var last = data.Row("JobLvConfig", rank * 100L + 40);
+            values.Add(before is { } b && last is { } l ? $"{new JobLvConfig(b).JobeExp},{new JobLvConfig(l).JobeExp}" : "0,0");
+            values.Add((session.Progress?.CompletedJobLevels.GetValueOrDefault(rank, 40) ?? 40).ToString());
+        }
+        return session.SendGameRawAsync(Job50State, Encoding.UTF8.GetBytes(string.Join('|', values)));
+    }
     internal static bool VisibleTo(GameSession session, WorldNpc npc) => npc.NpcId switch
     {
         CustomNpcSettings.HealerNpc => session.CustomNpcRows,

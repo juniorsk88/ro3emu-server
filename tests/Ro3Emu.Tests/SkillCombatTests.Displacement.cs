@@ -97,7 +97,9 @@ public sealed partial class SkillCombatTests
             SkillId = skill, TargetId = anchor?.Uid ?? target.Uid, TargetPos = kind == "pull-enemy" ? anchor!.Pos : point,
             Face = MonsterService.Angle(start.X, start.Z, point.X, point.Z),
         });
-        Assert.Equal(0, (await Next(alice, CombatService.UseSkill, CastSkillRsp.Parser)).Result);
+        var cast = await Next(alice, CombatService.UseSkill, CastSkillRsp.Parser);
+        int learned = await Loop.InvokeAsync(() => Task.FromResult(Session("alice").Progress!.Skills.GetValueOrDefault(group)));
+        Assert.True(cast.Result == 0, $"Cast result={cast.Result}, taught group={group}, learned level={learned}");
         var moved = await Next(alice, CombatService.SkillMove, SkillStartMoveNotify.Parser, m => m.EntityID == (ulong)target.Uid);
         Assert.Equal(effect, moved.EffectId);
         Assert.Equal(2, moved.MoveType);

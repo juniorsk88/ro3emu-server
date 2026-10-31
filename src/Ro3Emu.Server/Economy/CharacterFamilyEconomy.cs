@@ -26,7 +26,7 @@ internal static class CharacterFamilyEconomy
             : kind == ItemActionKind ? ["bag_state", "emoji_info", "personal", "social_outfit"]
             : kind[6..].Split('-')[0] switch
             {
-                "character" => ["bag_state", "equip_plans", "stat_plans", "activity_runtime", "title"],
+                "character" => ["bag_state", "equip_plans", "stat_plans", "activity_runtime", "title", "job_history"],
                 "equipment" => ["equip_levels", "equip_plans", "auto_decompose"],
                 "appraisal" or "enchant" => ["equip_plans"],
                 "card" => ["card_plans", "library", "equip_plans"],
