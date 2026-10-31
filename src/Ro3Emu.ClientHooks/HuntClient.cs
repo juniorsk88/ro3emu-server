@@ -19,7 +19,28 @@ namespace Ro3Emu.ClientHooks
             var texts = global.Obf_RuA<Obf_R.Obf_ff>("LanguageKV");
             var trans = global.Obf_RuA<Obf_R.Obf_ff>("Language")?.Obf_RuA<Obf_R.Obf_Ef>("Trans");
             if (npcs == null || interactions == null || dialogues == null || tasks == null || maps == null || texts == null || trans == null) return false;
+            var prontera = maps.Obf_ruA<long, Obf_R.Obf_ff>(10100L);
+            var sceneName = prontera?.Obf_RuA<string>("_kResSceneEditorName");
+            if (string.IsNullOrEmpty(sceneName)) return false;
+            var loadedScene = global.Obf_LuA<Obf_R.Obf_Ef>("require").Obf_HuA(sceneName);
+            var scene = loadedScene != null && loadedScene.Length > 0 ? loadedScene[0] as Obf_R.Obf_ff : null;
+            var sceneNpcs = scene?.Obf_RuA<Obf_R.Obf_ff>("kNpcList");
+            if (sceneNpcs == null) return false;
             var rawget = global.Obf_LuA<Obf_R.Obf_Ef>("rawget");
+            if (!CustomNpcClient.Exists(rawget, sceneNpcs, HuntTargets.HunterPoint))
+            {
+                var nearby = sceneNpcs.Obf_ruA<long, Obf_R.Obf_ff>(100015L);
+                if (nearby == null) return false;
+                var point = CustomNpcClient.Inherit(global, nearby);
+                PassChallenges.RawSet(point, "Id", (long)HuntTargets.HunterPoint);
+                PassChallenges.RawSet(point, "NpcId", Npc);
+                PassChallenges.RawSet(point, "x", HuntTargets.HunterX);
+                PassChallenges.RawSet(point, "y", HuntTargets.HunterY);
+                PassChallenges.RawSet(point, "z", HuntTargets.HunterZ);
+                PassChallenges.RawSet(point, "FaceDirection", 90L);
+                PassChallenges.RawSet(point, "TalkPositions", PassChallenges.List());
+                PassChallenges.RawSet(sceneNpcs, (long)HuntTargets.HunterPoint, point);
+            }
             if (CustomNpcClient.Exists(rawget, npcs, Npc) && CustomNpcClient.Exists(rawget, interactions, Dialog)
                 && CustomNpcClient.Exists(rawget, interactions, Accept) && CustomNpcClient.Exists(rawget, interactions, Deliver)
                 && CustomNpcClient.Exists(rawget, dialogues, Dialog) && CustomNpcClient.Exists(rawget, tasks, FirstTask)
@@ -87,7 +108,7 @@ namespace Ro3Emu.ClientHooks
                 PassChallenges.RawSet(task, "_iIsGlobalTask", 0L);
                 PassChallenges.RawSet(task, "_kPreTask", PassChallenges.List());
                 PassChallenges.RawSet(task, "_kAcceptTask", PassChallenges.List(3L));
-                PassChallenges.RawSet(task, "_kDeliverTask", PassChallenges.List(3L));
+                PassChallenges.RawSet(task, "_kDeliverTask", PassChallenges.List(2L, Npc, 10100L, (long)HuntTargets.HunterPoint, Dialog));
                 PassChallenges.RawSet(task, "_kAcceptAction", PassChallenges.List(PassChallenges.List("")));
                 PassChallenges.RawSet(task, "_kEXECAction", PassChallenges.List(PassChallenges.List("")));
                 PassChallenges.RawSet(task, "_kTimeLimit", 0L);

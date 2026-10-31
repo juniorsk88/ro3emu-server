@@ -26,6 +26,14 @@ public sealed partial class MapTests
             Assert.Equal(id == CustomNpcSettings.HealerNpc ? 180f : 90f, entity.Face);
             Assert.Equal(entity.Face, entity.MovementInfo.Face);
         }
+        var hunter = Assert.Single(map.Npcs, n => n.NpcId == CustomNpcSettings.HunterNpc);
+        Assert.Equal(HuntTargets.HunterX, hunter.X);
+        Assert.Equal(HuntTargets.HunterZ, hunter.Z);
+        using var scene = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(Path.Combine(ClientData.RepoRoot,
+            "data", "sceneeditor", "sc_prontera_001_sceneeditor.json")));
+        foreach (string group in new[] { "m_kRegins", "m_kMonsterSpawnPoints", "m_kTaskPoints", "kNpcList", "m_kWorldMonsterSpawnPoints" })
+            if (scene.RootElement.TryGetProperty(group, out var points) && points.ValueKind == System.Text.Json.JsonValueKind.Object)
+                Assert.False(points.TryGetProperty(HuntTargets.HunterPoint.ToString(), out _), $"Return point collides in {group}");
     }
 
     [ClientDataFact]

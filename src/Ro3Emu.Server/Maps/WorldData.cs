@@ -280,7 +280,7 @@ public sealed partial class WorldData(IOptions<ServerOptions> options, GameData 
             foreach (var (enabled, id, template, label, x, z, face) in new[]
             {
                 (custom.Healer, Game.CustomNpcSettings.HealerNpc, Game.CustomNpcSettings.HealerTemplate, "Curandeira", 156.5f, 190.5f, 180f),
-                (custom.Hunter, Game.CustomNpcSettings.HunterNpc, Game.CustomNpcSettings.HunterTemplate, "Caçador", 169.5f, 202.5f, 90f),
+                (custom.Hunter, Game.CustomNpcSettings.HunterNpc, Game.CustomNpcSettings.HunterTemplate, "Caçador", Game.HuntTargets.HunterX, Game.HuntTargets.HunterZ, 90f),
             })
             {
                 if (!enabled || data.Row("NPCConfig", template) is not { } npcRow) continue;

@@ -71,6 +71,22 @@ namespace Ro3Emu.ClientHooks
         private static int _frame;
         // The controller class tables already wrapped in this LuaEnv (their modules load on first use of the UI).
         private static Obf_R.Obf_ff _global, _topBarClass, _evePanelClass;
+        private static Obf_R.Obf_Ef _baseLevelTip;
+        public delegate object TaskTip(object taskId);
+        private static readonly TaskTip BaseLevelTipWrapper = BaseLevelTip;
+        private static object BaseLevelTip(object taskId)
+        {
+            var result = _baseLevelTip?.Obf_HuA(taskId);
+            var original = result != null && result.Length > 0 ? result[0] : null;
+            if (!Job50Client.ServerRecognized || original == null) return original;
+            var db = _global?.Obf_RuA<Obf_R.Obf_ff>("Lua_DBManager");
+            var managers = db?.Obf_RuA<Obf_R.Obf_Ef>("GetInstance")?.Obf_HuA(db);
+            var manager = managers != null && managers.Length > 0 ? managers[0] as Obf_R.Obf_ff : null;
+            var config = manager?.Obf_RuA<Obf_R.Obf_ff>("m_kCFG_BaseLvLimitConfig");
+            var maximum = config?.Obf_RuA<Obf_R.Obf_Ef>("GetMaxBaseLimit")?.Obf_HuA(config);
+            long cap = maximum != null && maximum.Length > 0 ? ToLong(maximum[0]) : 0;
+            return cap > 0 ? "Nível máximo do servidor: Nv." + cap : null;
+        }
         private static Obf_R.Obf_Ef _topBarState, _topBarRefresh, _evePanelOriginal;
         // Kept alive here: Lua holds the pushed delegates only weakly through xLua's object pool.
         private static readonly SelfMethod TopBarStateWrapper = UpdateCountdownState, TopBarRefreshWrapper = RefreshCountdown,
@@ -116,6 +132,9 @@ namespace Ro3Emu.ClientHooks
                 HotbarKey.Install(); // F12 = next skill plan (hotbar); needs no Lua, and guards itself (once, kill switch)
                 PatchCountdowns(manager, global);
                 PatchPayInit(manager, global);
+                var taskHelper = Module(manager, global, "lc_taskhelper");
+                _baseLevelTip = taskHelper?.Obf_RuA<Obf_R.Obf_Ef>("GetBaseLevelLimitTip");
+                if (_baseLevelTip != null) taskHelper.Obf_luA<string, TaskTip>("GetBaseLevelLimitTip", BaseLevelTipWrapper);
                 SoloDungeonEntry.Install(Module(manager, global, "ui_sys_dungeon_rightinfowidgetctrl"), Module(manager, global, "lc_dal_multiplayerdungeon"));
                 var functionHelper = Module(manager, global, "lc_functionhelper");
                 FeedbackButton.Install(global, functionHelper);

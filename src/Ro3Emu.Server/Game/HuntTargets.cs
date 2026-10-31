@@ -4,6 +4,8 @@ namespace Ro3Emu.Server.Game;
 
 internal static class HuntTargets
 {
+    internal const int HunterPoint = 990034;
+    internal const float HunterX = 169.5f, HunterY = 0.2f, HunterZ = 202.5f;
     private static readonly (int Npc, int Map)[] Targets =
     [
         (5000035, 10111), (5000035, 10111), (5000035, 10111), (5000035, 10111),

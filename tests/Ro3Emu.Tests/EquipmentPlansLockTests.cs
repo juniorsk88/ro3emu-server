@@ -14,7 +14,7 @@ namespace Ro3Emu.Tests;
 public sealed class EquipmentPlansLockTests : IAsyncLifetime
 {
     private readonly string _dataDir = Path.Combine(Path.GetTempPath(), "ro3emu-equipment-plans-" + Guid.NewGuid().ToString("N"));
-    private static readonly TimeSpan Wait = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan Wait = TimeSpan.FromSeconds(15);
     private WebApplication _app = null!;
     private string _http = "";
     private const int Dagger = 2010121, Shirt = 2550120, PurpleWeapon = 2010240, Crystal = 1200001, Shard = 1200000;

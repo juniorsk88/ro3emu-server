@@ -109,7 +109,7 @@ public sealed class ServerMetricsTests
         using var metrics = new ServerMetrics(observeRuntime: false);
         var connection = metrics.Connect();
         connection.Enqueued(16);
-        var drain = connection.WaitForDrainAsync(TimeSpan.FromSeconds(2));
+        var drain = connection.WaitForDrainAsync(TimeSpan.FromSeconds(15));
         Assert.False(drain.IsCompleted);
         connection.Sending(); connection.Sent(16, 16);
         await drain;

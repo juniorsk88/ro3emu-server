@@ -10,6 +10,7 @@ namespace Ro3Emu.ClientHooks
     {
         internal const uint Hello = 77023, State = 77024;
         private static string _pending, _state;
+        internal static bool ServerRecognized => _state != null;
 
         internal static void OnState(ReadOnlyMemory<byte> value) =>
             Interlocked.Exchange(ref _pending, Encoding.UTF8.GetString(value.ToArray()));
