@@ -160,10 +160,15 @@ public sealed partial class DungeonTests : IAsyncLifetime
             // A revive can leave this actor returning home. Engage through the owner before the
             // controlled HP setup, so the next return-completion tick cannot restore full health.
             Service<MonsterService>().Engage(actor, Session(bot));
+            // Settlement tests do not depend on target movement between teleport and cast.
+            actor.Moving = false;
+            actor.BusyUntilMs = long.MaxValue;
             actor.Hp = 1;
         });
         await bot.SendGameAsync(CombatService.UseSkill, new CastSkillReq { SkillId = 1000001, TargetId = actor.Uid });
-        Assert.Equal(0, (await Next(bot, CombatService.UseSkill, CastSkillRsp.Parser)).Result);
+        var cast = await Next(bot, CombatService.UseSkill, CastSkillRsp.Parser);
+        var distance = await Service<GameLoop>().InvokeAsync(() => Task.FromResult(MonsterService.Distance(actor, Session(bot))));
+        Assert.True(cast.Result == 0, $"cast={cast.Result}; distance={distance}; monsterMoving={actor.Moving}");
         try
         {
             await Next(bot, CombatService.SkillHit, SkillHitInfo.Parser,

@@ -144,8 +144,20 @@ public sealed class TowerPlayerLifecycleTests : IAsyncLifetime
             });
         });
         await bot.SendGameAsync(MsgId.Walk, new WalkReq { Pos = floor.Monsters[0].MovementInfo.Pos, BStop = true, SpeedRate = 1 });
-        await Next(bot, CombatService.SkillHit, SkillHitInfo.Parser,
-            hit => hit.Dsts.Any(d => d.DstID == (long)bot.Self!.Uuid && d.IsDead));
+        try
+        {
+            await Next(bot, CombatService.SkillHit, SkillHitInfo.Parser,
+                hit => hit.Dsts.Any(d => d.DstID == (long)bot.Self!.Uuid && d.IsDead));
+        }
+        catch (TimeoutException error)
+        {
+            var state = await Service<GameLoop>().InvokeAsync(() =>
+            {
+                var mob = Service<World>().AllUnits().OfType<MonsterUnit>().FirstOrDefault(m => m.Uid == (long)floor.Monsters[0].Uuid);
+                return Task.FromResult($"playerDead={Session.Dead}; hp={Session.CurrentHp}; mobPresent={mob != null}; target={mob?.Target?.Role?.Id}; distance={(mob == null ? -1 : MonsterService.Distance(mob, Session))}");
+            });
+            throw new TimeoutException("Tower lethal hit missing: " + state, error);
+        }
         var failed = await Next(bot, TowerService.End, ClimTowerEndNotify.Parser);
         Assert.False(failed.ClimTowerResult);
         await entered.Task.WaitAsync(Wait);

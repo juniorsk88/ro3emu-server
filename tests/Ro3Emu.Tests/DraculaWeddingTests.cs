@@ -159,11 +159,24 @@ public sealed class DraculaWeddingTests : IAsyncLifetime
         {
             await Service<SceneService>().TeleportInMapAsync(Session(bot), new MapPoint(actor.X + 1, actor.Y, actor.Z, actor.Face));
             Service<MonsterService>().Engage(actor, Session(bot));
+            actor.Moving = false;
+            actor.BusyUntilMs = long.MaxValue;
             actor.Hp = 1;
         });
+        int mark = bot.Inbox.Snapshot().Count;
         await bot.SendGameAsync(CombatService.UseSkill, new CastSkillReq { SkillId = 1000001, TargetId = actor.Uid });
         Assert.Equal(0, (await Next(bot, CombatService.UseSkill, CastSkillRsp.Parser)).Result);
-        await Next(bot, CombatService.SkillHit, SkillHitInfo.Parser, hit => hit.Dsts.Any(d => d.DstID == actor.Uid && d.IsDead));
+        try { await Next(bot, CombatService.SkillHit, SkillHitInfo.Parser, hit => hit.Dsts.Any(d => d.DstID == actor.Uid && d.IsDead)); }
+        catch (TimeoutException error)
+        {
+            var state = await Read(() => (actor.Hp, actor.Dead, actor.DeathDurable, Viewer: actor.Viewers.Contains(Session(bot)),
+                PlayerDead: Session(bot).Dead, Cast: Session(bot).SkillCast));
+            var events = bot.Inbox.Snapshot().Skip(mark).Where(e => e.IsGame(CombatService.SkillHit) || e.IsGame(CombatService.SkillEnd))
+                .TakeLast(10).Select(e => e.IsGame(CombatService.SkillHit)
+                    ? "hit=" + SkillHitInfo.Parser.ParseFrom(e.Body)
+                    : "end=" + SkillEndNotify.Parser.ParseFrom(e.Body));
+            throw new TimeoutException($"Lethal hit missing: hp={state.Hp}, dead={state.Dead}, durable={state.DeathDurable}, viewer={state.Viewer}, playerDead={state.PlayerDead}, castCancelled={state.Cast?.Cancelled}, castResolved={state.Cast?.Resolved}, events=[{string.Join("; ", events)}]", error);
+        }
     }
 
     private static async Task<int> Interact(BotClient bot, DungeonService.SceneActorUnit actor, int interaction)
@@ -268,6 +281,12 @@ public sealed class DraculaWeddingTests : IAsyncLifetime
 
         var plan = await Read(() => Session(alice).DungeonAttempt!.Plan);
         var map = Service<WorldData>().Map(Lair)!;
+        // This test exercises the event flow; surviving enemy damage is not its subject.
+        await OnLoop(async () =>
+        {
+            Session(alice).Progress!.Stats[2] = 100000;
+            await Service<CharacterService>().SetHpSpAsync(Session(alice), long.MaxValue, null);
+        });
         for (int wave = 0; wave < plan.Waves.Count - 1; wave++)
         {
             await Until(() => Session(alice).DungeonAttempt?.Wave == wave, $"wave {wave + 1}");

@@ -110,7 +110,11 @@ public sealed class CardCrashRecoveryTests
                 using (var integrity = db.CreateCommand())
                 {
                     integrity.CommandText = "PRAGMA integrity_check";
-                    Assert.Equal("ok", integrity.ExecuteScalar());
+                    try { Assert.Equal("ok", integrity.ExecuteScalar()); }
+                    catch (SqliteException error)
+                    {
+                        throw new Xunit.Sdk.XunitException($"SQLite integrity check after process death failed: code={error.SqliteErrorCode}, extended={error.SqliteExtendedErrorCode}, message={error.Message}");
+                    }
                 }
                 using var command = db.CreateCommand();
                 command.CommandText = "SELECT library,tasks,task_followup FROM role WHERE id=$role";

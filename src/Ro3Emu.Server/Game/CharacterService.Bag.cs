@@ -475,6 +475,8 @@ public sealed partial class CharacterService
         {
             var value = new EnchantAttr { GetTime = enchant.GetTime };
             value.Attr.Add(enchant.Attr);
+            // Lua protobuf omits empty maps; attribute 0 is absent in client data and keeps old clients readable.
+            if (value.Attr.Count == 0) value.Attr[0] = 0;
             info.Enchantment[id] = value;
         }
         return info;

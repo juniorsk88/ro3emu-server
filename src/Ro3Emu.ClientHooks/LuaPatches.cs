@@ -145,6 +145,7 @@ namespace Ro3Emu.ClientHooks
                     global.Obf_RuA<Obf_R.Obf_ff>("LC_SeasonHelper") ?? Module(manager, global, "lc_seasonhelper"),
                     global.Obf_RuA<Obf_R.Obf_ff>("LC_SeasonExplorationHelper") ?? Module(manager, global, "lc_seasonexplorationhelper"));
                 PersonalCards.Install((Obf_R.Obf_Cf)env, Module(manager, global, "lc_dal_personal"));
+                EnchantParser.Install((Obf_R.Obf_Cf)env, global, Module(manager, global, "lc_itemprotoparse"));
                 Debug.Log("[Ro3Emu.LuaPatches] lc_itemshowfunc: " + added + " card show-func method(s) added; stall name limit "
                     + (param != null ? StallNameMaxLength.ToString() : "not set (publicparamconfig missing)") + "; recharge url " + StoreUrl());
             }

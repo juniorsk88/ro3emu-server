@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Ro3Emu.Server.Accounts;
 using Ro3Emu.Server.Data;
+using Ro3Emu.Server.Data.Config;
 
 namespace Ro3Emu.Server.Game;
 
@@ -71,6 +72,15 @@ internal static class EquipmentStunts
     /// their Attr(1) operations (all 424 Flash rows are opcode 1) the same way (inferred, as for gear).</summary>
     internal static IEnumerable<(long Id, double Value)> FlatAttributes(GameSession session, GameData data)
     {
+        var marks = EmblemService.MarkCounts(EmblemService.Worn(session), data);
+        foreach (var item in Active(session, data))
+            foreach (int id in item.Enchantments.Keys)
+                if (data.Row("Enchantment", id) is { } enchant)
+                    foreach (long skill in new Enchantment(enchant).Skills)
+                        if (data.Row("SpecialEffectConfig", skill) is { } effect)
+                            foreach (var op in new SpecialEffectConfig(effect).SpecialEffect)
+                                if (op.Length == 5 && op[0] == 11 && op[1] > 0 && op[3] > 0)
+                                    yield return (op[3], (op[2] < 0 ? marks.GetValueOrDefault(op[1]) : Math.Min(marks.GetValueOrDefault(op[1]), op[2])) * op[4]);
         int count = Active(session, data).Sum(i => EquipmentAffixes.Specials(i).Count());
         foreach (var (item, op) in Operations(session, data))
         {

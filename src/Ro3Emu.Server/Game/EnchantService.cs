@@ -3,6 +3,7 @@ using Microsoft.Data.Sqlite;
 using Romsg;
 using Ro3Emu.Server.Accounts;
 using Ro3Emu.Server.Data;
+using Ro3Emu.Server.Data.Config;
 
 namespace Ro3Emu.Server.Game;
 
@@ -41,9 +42,7 @@ public sealed class EnchantService(GameData data, CharacterService character, Fu
             : enchantRow.ValueKind != JsonValueKind.Object ? ErrorCodes.EnchantParameter
             : !Flat(enchantRow, "_kEquipType").Contains(GameData.Int(g, "_iEquipPart")) ? ErrorCodes.EnchantParameter
             : StarLevel(GameData.Int(enchantRow, "_iStars")) is not > 0 || GameData.Int(g, "_iLevelNeed") > StarLevel(GameData.Int(enchantRow, "_iStars")) ? ErrorCodes.EnchantParameter
-            // The current export also has 28 skill-only rows, more than the documented summary listed.
-            // Their special effects are not implemented; an empty attr map is unsafe for LC_ItemProtoParse:303-317.
-            : Flat(enchantRow, "_iEnchantIDs").Length == 0 && Flat(enchantRow, "_iSkills").Length > 0 ? ErrorCodes.FeatureUnavailable
+            : Flat(enchantRow, "_iEnchantIDs").Length == 0 && !SupportedSpecial(enchantRow) ? ErrorCodes.FeatureUnavailable
             : 0;
 
         int enchantId = 0;
@@ -128,7 +127,7 @@ public sealed class EnchantService(GameData data, CharacterService character, Fu
     private ItemEnchantment? Roll(JsonElement row)
     {
         var templates = Flat(row, "_iEnchantIDs");
-        if (templates.Length == 0) return null;
+        if (templates.Length == 0) return SupportedSpecial(row) ? new ItemEnchantment() : null;
         var ranges = new List<long[]>();
         foreach (long id in templates)
         {
@@ -140,6 +139,15 @@ public sealed class EnchantService(GameData data, CharacterService character, Fu
         }
         var range = ranges[Random.Shared.Next(ranges.Count)];
         return new ItemEnchantment { Attr = { [(int)range[0]] = (int)Random.Shared.NextInt64(range[1], range[2] + 1) } };
+    }
+
+    // Enchantment._iSkills references SpecialEffectConfig; opcode 11 counts active Soul Echo marks.
+    private bool SupportedSpecial(JsonElement row)
+    {
+        var ids = new Enchantment(row).Skills;
+        return ids.Length > 0 && ids.All(id => data.Row("SpecialEffectConfig", id) is { } effect
+            && new SpecialEffectConfig(effect).SpecialEffect is { Length: > 0 } ops
+            && ops.All(op => op.Length == 5 && op[0] == 11 && op[1] > 0 && op[3] > 0));
     }
 
     /// <summary>PublicParamConfig.EnchantStarsLevel (Config/ComplexConfig/PublicParamConfig.lua:5951-5995).</summary>

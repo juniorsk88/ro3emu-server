@@ -66,7 +66,7 @@ namespace Ro3Emu.ClientHooks
             var targets = button.GetComponentsInChildren<Button>(true).Select(b => b.gameObject).Distinct().ToList();
             if (targets.Count == 0) targets.Add(button);
             foreach (var target in targets) target.AddComponent<Click>();
-            foreach (var label in button.GetComponentsInChildren<TMP_Text>(true)) label.text = "Title";
+            foreach (var label in button.GetComponentsInChildren<TMP_Text>(true)) label.text = "Título";
             Debug.Log("[Ro3Emu.TitleButton] added");
         }
 
@@ -143,7 +143,7 @@ namespace Ro3Emu.ClientHooks
 
         /// <summary>
         /// The widget was drawn for the mobile role panel's own background: here it would lie see-through over the
-        /// attributes, so it gets a parchment backdrop (first child, the widget's whole rect) and the attributes are hidden.
+        /// attributes, so it gets a parchment backdrop around its content and the attributes are hidden.
         /// </summary>
         private static void Backdrop(Transform[] all)
         {
@@ -152,14 +152,21 @@ namespace Ro3Emu.ClientHooks
             bool shown = widget != null && widget.gameObject.activeInHierarchy;
             if (attributes != null && attributes.gameObject.activeSelf == shown) attributes.gameObject.SetActive(!shown);
             if (widget == null || widget.Find(BackdropName) != null) return;
+            if (!(widget is RectTransform widgetRect) || !(widget.parent is RectTransform parentRect)
+                || parentRect.rect.width <= 0 || parentRect.rect.height <= 0) return;
+
+            // The original title widget is a full-screen mobile panel; its content occupies this smaller area.
+            const float width = 1600f, height = 970f, centerX = 110f;
+            float scale = Mathf.Min(parentRect.rect.width / width, parentRect.rect.height / height);
+            widgetRect.localScale = Vector3.one * scale;
+            widgetRect.anchoredPosition = new Vector2(-centerX * scale, 0f);
             var backdrop = new GameObject(BackdropName, typeof(RectTransform), typeof(Image));
             var rect = (RectTransform)backdrop.transform;
             rect.SetParent(widget, false);
             rect.SetAsFirstSibling();
-            rect.anchorMin = Vector2.zero;
-            rect.anchorMax = Vector2.one;
-            rect.offsetMin = new Vector2(-12, -12);
-            rect.offsetMax = new Vector2(12, 12);
+            rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.sizeDelta = new Vector2(width, height);
+            rect.anchoredPosition = new Vector2(centerX, 0f);
             var image = backdrop.GetComponent<Image>();
             image.color = new Color(0.93f, 0.89f, 0.80f, 0.98f);
             image.raycastTarget = false;

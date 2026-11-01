@@ -118,6 +118,20 @@ public sealed class EconomyShopTests : IAsyncLifetime
     }
 
     [ClientDataFact]
+    public async Task PetFragmentPurchaseChargesTheExistingPetShopPrice()
+    {
+        await using var bot = await Enter();
+        await Gm("!item 1250710 1000");
+        int commodity = PetShopCatalog.Commodity(1633102);
+        var result = await Buy(bot, commodity, count: 2);
+        Assert.Equal((0, commodity, 2, 500, 2), (result.Result, result.CommodityId, result.Count, result.Price, result.BuyTimes));
+        Assert.Equal(2, Session().Items.Where(i => i.Entry == 1633102).Sum(i => i.Stack));
+        Assert.Equal(0, Session().Progress!.Currency.GetValueOrDefault(1250710));
+        Assert.Equal(ErrorCodes.CurrencyShort, (await Buy(bot, commodity)).Result);
+        Assert.Equal(2, Session().Items.Where(i => i.Entry == 1633102).Sum(i => i.Stack));
+    }
+
+    [ClientDataFact]
     public async Task EqualWirePurchasesAreDistinctAndRefusalsNeverCreateReceipts()
     {
         await using var bot = await Enter(level: false);

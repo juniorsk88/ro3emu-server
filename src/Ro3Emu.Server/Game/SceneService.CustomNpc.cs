@@ -9,6 +9,7 @@ public sealed partial class SceneService
 {
     internal const uint CustomNpcHello = 77022;
     internal const uint Job50Hello = 77023, Job50State = 77024;
+    private long _healerVisualSequence;
 
     internal Task Job50HelloAsync(GameSession session)
     {
@@ -67,5 +68,19 @@ public sealed partial class SceneService
             await buffs.AddAsync(session, id, 600000, npc.Uid);
         }
         await character.SetHpSpAsync(session, long.MaxValue, long.MaxValue);
+        // EffectData identifies the target visuals for Blessing, Increase AGI and Heal.
+        foreach (var (skill, effect) in new[] { (1400100 + settings.BuffLevel, 1400102),
+                     (1401000 + settings.BuffLevel, 1401004), (1400701, 14007800) })
+        {
+            long id = Interlocked.Increment(ref _healerVisualSequence);
+            var hit = new SkillHitInfo
+            {
+                SrcID = npc.Uid, SkillId = skill, SessionId = id, RootCtxGuid = id, ShowPoint = effect, Split = 1,
+                SrcElement = 1,
+                Dsts = { new DamageInfo { DstID = session.Role.Id, DamageType = DamageType.DamageShare, DstElement = 1 } },
+            };
+            await session.SendGameAsync(CombatService.SkillHit, hit);
+            foreach (var viewer in world.Viewers(session)) await viewer.SendGameAsync(CombatService.SkillHit, hit);
+        }
     }
 }

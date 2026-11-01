@@ -54,6 +54,8 @@ public sealed class GameData(IOptions<ServerOptions> options, ILogger<GameData> 
                 table[row.ValueKind == JsonValueKind.Object && row.TryGetProperty("_iID", out var rid) ? rid.ToString() : (i + 1).ToString()] = row;
         if (Path.GetFileName(path).Equals("TaskConfig.json", StringComparison.OrdinalIgnoreCase))
             Config.HuntTaskRows.AddTo(table);
+        if (Path.GetFileName(path).Equals("ShopCommodityConfig.json", StringComparison.OrdinalIgnoreCase))
+            Config.PetShopRows.AddTo(table);
         return table;
     }
 

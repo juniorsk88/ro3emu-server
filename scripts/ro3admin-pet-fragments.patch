@@ -1,0 +1,73 @@
+--- a/items_api.py
++++ b/items_api.py
+@@ -67,7 +67,7 @@
+         cid, label = _cat(row)
+         sub = EQUIP_SUBS.get(row.get("_iSubType")) if cid == "equip" else None
+         rows.append({"id": iid, "name": TA.pt("item", en) if not en.startswith("Item ") else en, "name_en": en,
+-                     "icon": row.get("_kIcon", "") or "", "quality": row.get("_iQuality", 0) or 0, "cat": cid, "cat_label": label,
++                     "icon": TA.item_icon(iid), "quality": row.get("_iQuality", 0) or 0, "cat": cid, "cat_label": label,
+                      "sub": row.get("_iSubType", 0) if cid == "equip" else 0, "sub_label": sub[0] if sub else "",
+                      "group": sub[1] if sub else "", "level": row.get("_iLevelNeed", 0) or 0})
+     rows.sort(key=lambda r: r["id"])
+@@ -85,7 +85,9 @@
+         page = 1
+     rows = _index()
+     if q:
+-        rows = [r for r in rows if q in r["name"].lower() or q in r["name_en"].lower() or str(r["id"]) == q]
++        rows = [r for r in rows if q in r["name"].lower() or q in r["name_en"].lower() or str(r["id"]) == q
++                or (len(q) >= 4 and q in "fragmento" and r["icon"].startswith("pet_icon_head_")
++                    and "shard" in r["name_en"].lower())]
+     counts = {}
+     for r in rows:
+         counts[r["cat"]] = counts.get(r["cat"], 0) + 1
+--- a/tuning_api.py
++++ b/tuning_api.py
+@@ -55,6 +55,28 @@
+     return out
+ 
+ 
++_PET_ICONS = {"items": None, "loc": None, "icons": {}}
++
++
++def resolved_item_icon(row):
++    icon = row.get("_kIcon", "") or ""
++    if icon != "pet_icon_head_104.png" or row.get("_iSubType") != 906:
++        return icon
++    items, loc = table("ItemConfig"), table("Localization_en")
++    if _PET_ICONS["items"] is not items or _PET_ICONS["loc"] is not loc:
++        candidates = {}
++        for item in items.values():
++            if not isinstance(item, dict) or item.get("_iSubType") != 906:
++                continue
++            candidate = item.get("_kIcon", "") or ""
++            if candidate.startswith("pet_icon_head_") and candidate != icon:
++                name = text(item.get("_iName"))
++                if name:
++                    candidates.setdefault(name, set()).add(candidate)
++        _PET_ICONS.update(items=items, loc=loc, icons={name: next(iter(found)) for name, found in candidates.items() if len(found) == 1})
++    return _PET_ICONS["icons"].get(text(row.get("_iName")), icon)
++
++
+ _PT = {"m": 0, "d": {}}
+ 
+ 
+@@ -92,7 +114,7 @@
+ def item_icon(item_id):
+     """Arquivo do icone (admin/assets/items/<arquivo>) ou '' — mesmo campo usado na loja."""
+     row = table("ItemConfig").get(str(item_id))
+-    ic = row.get("_kIcon") if isinstance(row, dict) else ""
++    ic = resolved_item_icon(row) if isinstance(row, dict) else ""
+     return ic if isinstance(ic, str) and ic.endswith(".png") else ""
+ 
+ 
+--- a/admin.py
++++ b/admin.py
+@@ -559,7 +559,7 @@
+                 text += entry.get("_kDes", "") or ""
+     return {
+         "name": tuning_api.pt("item", text) if text else f"Item {item_id}",
+-        "icon": row.get("_kIcon", "") or "",
++        "icon": tuning_api.resolved_item_icon(row),
+         "quality": row.get("_iQuality", 0) or 0,
+         "equip_part": row.get("_iEquipPart", 0) or 0,
+     }

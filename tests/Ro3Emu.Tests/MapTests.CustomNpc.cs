@@ -68,6 +68,14 @@ public sealed partial class MapTests
         await alice.SendGameAsync(SceneService.NpcInteraction, new NpcInteractionReq
         { NpcUid = (long)healer.Uuid, InteractionId = CustomNpcSettings.HealerInteraction, SceneConfigId = Prontera });
         Assert.Equal(0, (await Next(alice, SceneService.NpcInteraction, NpcInteractionRsp.Parser)).Result);
+        foreach (var (skill, effect) in new[] { (1400110, 1400102), (1401010, 1401004), (1400701, 14007800) })
+        {
+            var hit = await Next(alice, CombatService.SkillHit, SkillHitInfo.Parser,
+                h => h.SrcID == (long)healer.Uuid && h.SkillId == skill);
+            Assert.Equal(effect, hit.ShowPoint);
+            Assert.Equal((long)alice.Self!.Uuid, Assert.Single(hit.Dsts).DstID);
+            Assert.Equal(DamageType.DamageShare, hit.Dsts[0].DamageType);
+        }
         await Next(alice, CharacterService.OnePropertyChange, OnePropertyChange.Parser,
             p => p.Property.Propertys.Any(v => v.PropertyId == 2000 && v.Data > 1));
         await loop.InvokeAsync(() =>

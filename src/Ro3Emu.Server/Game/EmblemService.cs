@@ -268,7 +268,7 @@ public sealed partial class EmblemService
     }
 
     /// <summary>Lit marks per mark id over the given echoes (LC_EmblemHelper.GetAllMarkEquipedNum).</summary>
-    private static Dictionary<long, int> MarkCounts(IEnumerable<InvItem> worn, GameData data)
+    internal static Dictionary<long, int> MarkCounts(IEnumerable<InvItem> worn, GameData data)
     {
         var marks = new Dictionary<long, int>();
         foreach (var item in worn)

@@ -309,6 +309,43 @@ public sealed class AppraiseEnchantTests : IAsyncLifetime
     }
 
     [ClientDataFact]
+    public async Task SpecialEnchantOpensAnotherSlotAndPersistsWithoutInventedAttributes()
+    {
+        await using var alice = await InWorld("Alice");
+        await OpenEnchant();
+        var gear = await Give(Gear);
+        var ordinary = await Give(Scroll);
+        var special = await Give(1011609);
+        await Gm("alice", "!item 2 20000");
+        Assert.Equal(0, (await Apply(alice, gear.Guid, ordinary.Guid)).Result);
+        Assert.Equal(0, (await Apply(alice, gear.Guid, special.Guid)).Result);
+        var update = await Next(alice, CharacterService.ItemsSync, DBItemsInfoIncrement.Parser,
+            m => m.PackInfo.GetValueOrDefault(2)?.Inc?.Items.GetValueOrDefault(gear.Guid)?.Inc?.Enchantment.ContainsKey(1011609) == true);
+        Assert.Equal(0, update.PackInfo[2].Inc.Items[gear.Guid].Inc.Enchantment[1011609].All.Attr[0]);
+        var enchantments = Live(gear.Guid).Enchantments;
+        Assert.Equal(2, enchantments.Count);
+        Assert.Contains(Scroll, enchantments.Keys);
+        Assert.Empty(enchantments[1011609].Attr);
+        var saved = Service<ItemStore>().Load(Session().Role!.Id).Single(i => i.Guid == gear.Guid);
+        Assert.Contains(1011609, saved.Enchantments.Keys);
+        Assert.Empty(saved.Enchantments[1011609].Attr);
+        Assert.Equal(0, (await Wear(alice, gear.Guid)).Result);
+        var echo = await Give(1830101);
+        await Service<GameLoop>().InvokeAsync(() =>
+        {
+            var item = Live(echo.Guid);
+            item.Attrs ??= new();
+            item.Attrs[1021] = 1002;
+            item.Attrs[1022] = 1002;
+            Session().Emblems.Plans[Session().Emblems.CurrentPlan].Slots[1] = item.Guid;
+            Assert.Contains(EquipmentStunts.FlatAttributes(Session(), Service<GameData>()), x => x.Id == 221 && x.Value == 40);
+            item.Attrs[1022] = 1001;
+            Assert.Contains(EquipmentStunts.FlatAttributes(Session(), Service<GameData>()), x => x.Id == 221 && x.Value == 20);
+            return Task.CompletedTask;
+        });
+    }
+
+    [ClientDataFact]
     public async Task FullSlotsEvictOneAndSameIdRerollKeepsCapacity()
     {
         await using var alice = await InWorld("Alice");
@@ -397,7 +434,6 @@ public sealed class AppraiseEnchantTests : IAsyncLifetime
         var wrongType = await Give(2010540);
         var overLevel = await Give(2030640);
         var unappraised = await Give(2030550);
-        var skillOnly = await Give(1011607);
         await Gm("alice", "!item 2 10000");
         await Refuse(gear.Guid, scroll.Guid, ErrorCodes.FeatureUnavailable);
         await Gm("alice", "!lvl 50"); // enchant's own condition holds, its parent is still closed
@@ -415,7 +451,6 @@ public sealed class AppraiseEnchantTests : IAsyncLifetime
             (wrongType.Guid, scroll.Guid, ErrorCodes.EnchantParameter),
             (overLevel.Guid, scroll.Guid, ErrorCodes.EnchantParameter),
             (unappraised.Guid, scroll.Guid, ErrorCodes.EquipNotAppraised),
-            (gear.Guid, skillOnly.Guid, ErrorCodes.FeatureUnavailable),
         }) await Refuse(target, material, error);
         await Gm("alice", "!delitem 2 1");
         await Refuse(gear.Guid, scroll.Guid, ErrorCodes.EnchantMaterials);

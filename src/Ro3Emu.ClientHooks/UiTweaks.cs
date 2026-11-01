@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -40,6 +41,13 @@ namespace Ro3Emu.ClientHooks
                     var window = GameObject.Find(name);
                     if (window != null && Done.Add(window.GetInstanceID())) WidenStallName(window.transform);
                 }
+                var role = GameObject.Find("UI_Sys_RoleWindow(Clone)");
+                if (role != null)
+                    foreach (var transform in role.GetComponentsInChildren<Transform>(true))
+                        if (transform.name == "UI_Sys_RoleAttributesWidget(Clone)" && Done.Add(transform.gameObject.GetInstanceID()))
+                            FitRoleButtons(transform);
+                var points = GameObject.Find("UI_Sys_RoleAddAttributesWidget(Clone)");
+                if (points != null && Done.Add(points.GetInstanceID())) FitAttributeHeaders(points.transform);
                 if (Done.Count > 64) Done.Clear();
                 QuitButton.Tick();
                 LuaPatches.Tick();
@@ -55,6 +63,44 @@ namespace Ro3Emu.ClientHooks
         }
 
         private static readonly string[] StallWindows = { "UI_Sys_StallWindow(Clone)", "UI_Sys_StallWindow_PC(Clone)" };
+
+        private static void FitRoleButtons(Transform role)
+        {
+            foreach (var target in role.GetComponentsInChildren<RectTransform>(true))
+            {
+                if (target.name != "SeasonCuisineBtn_RTransform" && target.name != "AddAttribute_RTransform") continue;
+                foreach (var label in target.GetComponentsInChildren<TMP_Text>(true))
+                {
+                    if (label.name != "Txt_White" && label.name != "White_TTxt") continue;
+                    var fitter = label.GetComponent<ContentSizeFitter>();
+                    if (fitter != null) fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+                    var rect = label.rectTransform;
+                    rect.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, target.rect.width * 0.68f);
+                    float size = label.enableAutoSizing ? label.fontSizeMax : label.fontSize;
+                    label.fontSizeMax = size;
+                    label.fontSizeMin = Mathf.Max(8f, size * 0.5f);
+                    label.enableWordWrapping = false;
+                    label.enableAutoSizing = true;
+                    var icon = rect.Find("Img_Icon") as RectTransform;
+                    if (icon != null) icon.anchoredPosition = new Vector2(-rect.rect.width / 2f - icon.rect.width / 2f, icon.anchoredPosition.y);
+                }
+            }
+        }
+
+        private static void FitAttributeHeaders(Transform points)
+        {
+            foreach (var label in points.GetComponentsInChildren<TMP_Text>(true))
+            {
+                if (label.transform.parent == null || label.transform.parent.name != "TxtGroup"
+                    || (label.name != "Txt_Type1" && label.name != "Txt_Type2" && label.name != "Txt_Type3" && label.name != "Txt_Type4")) continue;
+                label.rectTransform.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, label.name == "Txt_Type4" ? 125f : 110f);
+                float size = label.enableAutoSizing ? label.fontSizeMax : label.fontSize;
+                label.fontSizeMax = size;
+                label.fontSizeMin = Mathf.Max(8f, size * 0.5f);
+                label.enableWordWrapping = false;
+                label.enableAutoSizing = true;
+            }
+        }
 
         /// <summary>
         /// The stall title input (UI_Sys_StallWindow m_kTINPUTFIELD_TInput) has characterLimit 10 in the prefab, sized for

@@ -115,6 +115,7 @@ namespace Ro3Emu.ClientHooks
                     {
                         if (HuntClient.Inject(loaded, _global)) CustomNpcClient.Hello(loaded, _global);
                         Job50Client.Tick(loaded, _global);
+                        PetShopClient.Inject(loaded, _global);
                     }
                 }
                 catch (Exception e) { Debug.LogWarning("[Ro3Emu.Pass] row check failed: " + e.Message); }
