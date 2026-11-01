@@ -47,6 +47,30 @@ public class MonsterAiSettingsTests : IDisposable
     }
 
     [Fact]
+    public void FirstProfileReadLoadsThePanelFile()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "ro3-monai-" + Guid.NewGuid().ToString("N"));
+        string? previous = Environment.GetEnvironmentVariable("Ro3Emu__DataDir");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "monster-ai.json"), """{ "boss": { "giveUp": "player", "returnHome": false, "heal": false } }""");
+            Environment.SetEnvironmentVariable("Ro3Emu__DataDir", dir);
+            MonsterAiSettings.PinForTest(null);
+            var boss = MonsterAiSettings.For(true);
+            Assert.False(boss.GiveUpFromHome);
+            Assert.False(boss.ReturnHome);
+            Assert.False(boss.HealOnReset);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("Ro3Emu__DataDir", previous);
+            MonsterAiSettings.PinForTest(null);
+            Directory.Delete(dir, true);
+        }
+    }
+
+    [Fact]
     public void TheFileIsReadAgainWhenItChanges()
     {
         string dir = Path.Combine(Path.GetTempPath(), "ro3-monai-" + Guid.NewGuid().ToString("N"));

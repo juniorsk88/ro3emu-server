@@ -53,7 +53,8 @@ public static class MonsterAiSettings
         if (!_pinned)
         {
             long now = Environment.TickCount64;
-            if (now - Volatile.Read(ref _checkedAt) >= 1000)
+            long last = Volatile.Read(ref _checkedAt);
+            if (last == long.MinValue || now - last >= 1000)
             {
                 string dir = Environment.GetEnvironmentVariable("Ro3Emu__DataDir") ?? "data";
                 current = Read(Path.Combine(dir, "monster-ai.json"));

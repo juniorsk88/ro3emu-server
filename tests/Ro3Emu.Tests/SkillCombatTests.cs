@@ -381,6 +381,41 @@ public sealed partial class SkillCombatTests : IAsyncLifetime
     /// <summary>The time-based give-up (AIConfig _iUnFightType 2): a monster that has not been hit nor hit anything for the
     /// configured time lets go of its target, so one stuck behind an obstacle does not hold it for ever; 0 turns it off.</summary>
     [ClientDataFact]
+    public async Task FieldMvpRespectsPanelChaseAndKeepsHpOnDisengage()
+    {
+        await using var alice = await InWorld("Alice");
+        var m = await Target("alice");
+        var monsters = _app.Services.GetRequiredService<MonsterService>();
+        var scenes = _app.Services.GetRequiredService<SceneService>();
+        try
+        {
+            var profile = MonsterAiSettings.BossDefault with { GiveUpFromHome = false, ReturnHome = false, HealOnReset = false };
+            MonsterAiSettings.PinForTest(new MonsterAiProfiles(MonsterAiSettings.FieldDefault, profile));
+            await Loop.InvokeAsync(async () =>
+            {
+                var s = Session("alice");
+                var map = _app.Services.GetRequiredService<World>().Map(s.WorldScene);
+                m.SpecialsOwnedByMvp = true;
+                m.NextRoamMs = m.NextSwingMs = long.MaxValue;
+                m.Hp = m.Template.MaxHp / 2;
+                long hp = m.Hp;
+                float leash = m.Template.LeashDistance;
+                m.X = m.Home.X + leash * 2; m.Moving = false; map.Moved(m);
+                await scenes.TeleportInMapAsync(s, new MapPoint(m.X, m.Y, m.Z, 0));
+                monsters.Engage(m, s);
+                monsters.Tick(m, map);
+                Assert.Same(s, m.Target);
+                await scenes.TeleportInMapAsync(s, new MapPoint(m.X + leash + 5, m.Y, m.Z, 0));
+                monsters.Tick(m, map);
+                Assert.Null(m.Target);
+                Assert.False(m.Returning);
+                Assert.Equal(hp, m.Hp);
+            });
+        }
+        finally { MonsterAiSettings.PinForTest(null); }
+    }
+
+    [ClientDataFact]
     public async Task FieldMonsterGivesUpAfterTheConfiguredTimeWithoutCombat()
     {
         await using var alice = await InWorld("Alice");

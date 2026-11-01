@@ -752,7 +752,9 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
     {
         double angle = _random.NextDouble() * Math.PI * 2;
         float r = (float)(_random.NextDouble() * m.Template.RoamDistance);
-        var (cx, cz) = m.RoamAnchor ?? (m.Home.X, m.Home.Z);
+        var ai = AiOf(m);
+        var (cx, cz) = m.SpecialsOwnedByMvp && !ai.GiveUpFromHome && !ai.ReturnHome
+            ? (m.X, m.Z) : m.RoamAnchor ?? (m.Home.X, m.Home.Z);
         WalkTo(m, map, cx + (float)Math.Cos(angle) * r, cz + (float)Math.Sin(angle) * r, 1f);
     }
 

@@ -21,6 +21,8 @@ Defaults: **field** `player`, 1.0, 30 s, no return, no heal, pathfinding on; **b
 
 The defaults let a pack be pulled across the map and handed to another player at the HP it has, which is how monsters are
 gathered for an area attack. Bosses keep their post so nobody can lead an MVP away and reset it.
+When the boss profile uses `giveUp: player` and `returnHome: false`, field MVPs choose each idle walk from their current position,
+so their patrol is not confined to their original spawn or the last place they gave up. The other boss settings remain effective.
 
 ## Walking around obstacles
 
