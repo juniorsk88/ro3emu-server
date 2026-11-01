@@ -275,11 +275,12 @@ public sealed partial class TimedBattleService
     {
         long roleId = leader.Role!.Id;
         var (teamId, head) = _teams.TeamOf(roleId);
-        if (teamId == 0) return (ErrorCodes.RiftNoParty, [], 0);
+        bool solo = _options.DungeonSolo || leader.DungeonSoloMatch;
+        if (teamId == 0) return solo ? (RiftMemberError(leader, stone, null), [leader], 0) : (ErrorCodes.RiftNoParty, [], 0);
         if (head != roleId) return (ErrorCodes.NotPartyLeader, [], 0);
         var ids = _teams.MembersOf(roleId);
         var (min, max) = RiftPartySize();
-        if (ids.Count < min) return (ErrorCodes.RiftPartyTooSmall, [], 0);
+        if (ids.Count < min && !(ids.Count == 1 && solo)) return (ErrorCodes.RiftPartyTooSmall, [], 0);
         if (ids.Count > max) return (ErrorCodes.RiftPartyTooLarge, [], 0);
         var online = _sessions.All().Where(p => p.Role != null).GroupBy(p => p.Role!.Id).ToDictionary(g => g.Key, g => g.First());
         var members = new List<GameSession>();
@@ -471,7 +472,20 @@ public sealed partial class TimedBattleService
             ? new MapPoint(spawn.X, spawn.Y, spawn.Z, spawn.Face) : map?.Born;
         if (point == null || a.Monster <= 0) return;
         a.Spawning = true;
-        try { a.Boss = await _instances.SpawnAsync(a.Room, a.Monster, point.Value); }
+        try
+        {
+            MonsterTemplate? template = null;
+            var (min, max) = RiftPartySize();
+            if (a.Members.Length == 1 && _soloScale.For(1, min, max) is { } scale
+                && _monsters.Template(a.Monster) is { } original)
+                template = original with
+                {
+                    MaxHp = Math.Max(1, original.MaxHp * scale.Hp / 100),
+                    Atk = original.Atk * scale.Attack / 100,
+                    Matk = original.Matk * scale.Attack / 100
+                };
+            a.Boss = await _instances.SpawnAsync(a.Room, a.Monster, point.Value, customTemplate: template);
+        }
         finally { a.Spawning = false; }
         _loop.ScheduleRuntime(TimeSpan.FromMilliseconds(RiftFightMilliseconds), async () =>
         { if (!a.Settled) await SettleTreasureAsync(a, false); });

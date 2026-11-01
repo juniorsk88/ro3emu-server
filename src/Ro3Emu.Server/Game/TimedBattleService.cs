@@ -70,6 +70,7 @@ public sealed partial class TimedBattleService : IGameTicker
     private readonly ServerOptions _options;
     private readonly SessionRegistry _sessions;
     private readonly TeamService _teams;
+    private readonly DungeonSoloScale _soloScale;
     private readonly LifeJobService _life;
     private readonly GameLoop _loop;
     private readonly PraiseService _praise;
@@ -200,8 +201,9 @@ public sealed partial class TimedBattleService : IGameTicker
         CharacterService character, FunctionService functions, AwardService awards, TaskService tasks, InstanceService instances, SceneService scene, WorldData worldData,
         MonsterService monsters, CombatService combat, SessionRegistry sessions, TeamService teams, LifeJobService life, GameLoop loop,
         BuffService buffs, SkillService skills, World world, IOptions<ServerOptions> options, ILogger<TimedBattleService> log,
-        GmCommands gm, PraiseService praise)
+        GmCommands gm, PraiseService praise, DungeonSoloScale soloScale)
     {
+        _soloScale = soloScale;
         this._praise = praise;
         gm.Register("rift", "| new | party [min] | <star 1-6> [boss name] (Rift Crisis test aid: status, new round, "
             + "smallest party, or a stone next to you)", RiftGmAsync);

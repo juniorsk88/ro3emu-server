@@ -136,6 +136,7 @@ namespace Ro3Emu.ClientHooks
                 _baseLevelTip = taskHelper?.Obf_RuA<Obf_R.Obf_Ef>("GetBaseLevelLimitTip");
                 if (_baseLevelTip != null) taskHelper.Obf_luA<string, TaskTip>("GetBaseLevelLimitTip", BaseLevelTipWrapper);
                 SoloDungeonEntry.Install(Module(manager, global, "ui_sys_dungeon_rightinfowidgetctrl"), Module(manager, global, "lc_dal_multiplayerdungeon"));
+                SoloRiftEntry.Install(global, Module(manager, global, "lc_interactactions"), Module(manager, global, "lc_teamhelper"));
                 var functionHelper = Module(manager, global, "lc_functionhelper");
                 FeedbackButton.Install(global, functionHelper);
                 PassChallenges.Install(global);

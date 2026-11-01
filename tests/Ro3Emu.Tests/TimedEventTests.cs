@@ -942,6 +942,37 @@ public sealed class TimedEventTests : IAsyncLifetime
         Task.FromResult(Service<TimedBattleService>().RiftStones.ToArray()));
 
     [ClientDataFact]
+    public async Task RiftSoloUsesDungeonSoloScaleAndKeepsTheNormalRewards()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_dataDir, "dungeon-solo.json"), "{\"hpPercent\":50,\"attackPercent\":40}");
+        var bots = await RiftPlayersAsync("Ada");
+        await using var ada = bots[0];
+        var stone = await GmRiftStoneAsync(ada, "!rift 1 Cat");
+        Assert.Equal(ErrorCodes.RiftNoParty, await RiftEnterAsync(ada, stone));
+        await Gm(ada, "!dungeonsolo on");
+        long coins = Service<CharacterService>().CountOf(Session(ada), 2);
+        long instance = await RiftFightAsync(stone, ada);
+        var boss = await RiftBossAsync(instance, stone.Boss);
+        var original = Service<MonsterService>().Template(stone.Boss)!;
+        Assert.Equal(Math.Max(1, original.MaxHp / 2), boss.Template.MaxHp);
+        Assert.Equal(original.Atk * 40 / 100, boss.Template.Atk);
+        Assert.Equal(original.Matk * 40 / 100, boss.Template.Matk);
+        await RiftKillAsync(ada, boss);
+        var result = await Next(ada, DungeonService.Result, DungeonResNotify.Parser);
+        Assert.Equal((DungeonRes)1, result.Res);
+        Assert.Equal((2, 10000), (result.Data.OnePieceData.BaseReward.Single().ItemEntry,
+            result.Data.OnePieceData.BaseReward.Single().Stack));
+        Assert.Equal(coins + 10000, Service<CharacterService>().CountOf(Session(ada), 2));
+        Assert.Equal(9, await RiftCountAsync(ada));
+        await RiftBackAsync(ada);
+        await RiftPartyAsync(ada);
+        var second = await GmRiftStoneAsync(ada, "!rift 1 Cat");
+        long nextInstance = await RiftFightAsync(second, ada);
+        Assert.NotEqual(instance, nextInstance);
+        Assert.NotNull(await RiftBossAsync(nextInstance, second.Boss));
+    }
+
+    [ClientDataFact]
     public async Task RiftPartyOfThreeEntersOneRoomAndEachMemberIsPaidAgainstItsOwnCounts()
     {
         var bots = await RiftPlayersAsync("Ada", "Ben", "Cid");
