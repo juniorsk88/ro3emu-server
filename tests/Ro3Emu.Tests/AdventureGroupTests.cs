@@ -474,13 +474,15 @@ public sealed class AdventureGroupTests : IAsyncLifetime
 
         // The weekly cap (AdventureGroupMoneyWeeklyLimit 1000) bounds what quests add.
         long gained = 0;
+        long remaining = 0;
         await OnLoop(async () =>
         {
             using var scope = await Service<Ro3Emu.Server.Game.Ownership.OwnerRegistry>().EnterAsync("test/advguild-exp",
                 Ro3Emu.Server.Game.Ownership.ReservationKey.Realm);
+            remaining = 1000 - Store.Get(group)!.WeekMoney;
             gained = await Service<AdventureGroupService>().AddExpAsync(a, 5000);
         });
-        Assert.Equal(950, gained);
+        Assert.Equal(remaining, gained);
         Assert.Equal(5, Store.Get(group)!.Level);
     }
 

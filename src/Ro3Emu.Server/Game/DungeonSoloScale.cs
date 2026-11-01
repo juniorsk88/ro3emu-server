@@ -15,10 +15,11 @@ public sealed class DungeonSoloScale(IOptions<ServerOptions> options)
 {
     private readonly object gate = new();
     private (int Hp, int Attack) current = (100, 100);
+    private (int Hp, int Attack) riftCurrent = (100, 100);
     private long checkedAt = Environment.TickCount64 - 2000; // due at the first call
 
     /// <summary>Hp and attack percentages for <paramref name="players"/> fighting a boss that needs <paramref name="minPlayers"/>; null = unchanged.</summary>
-    public (int Hp, int Attack)? For(int players, int minPlayers, int maxPlayers = 0)
+    public (int Hp, int Attack)? For(int players, int minPlayers, int maxPlayers = 0, bool rift = false)
     {
         if (players >= minPlayers && players < maxPlayers && options.Value.DungeonMissingMemberPercent is > 0 and var each)
         {
@@ -26,13 +27,13 @@ public sealed class DungeonSoloScale(IOptions<ServerOptions> options)
             return (percent, percent);
         }
         if (players >= minPlayers || minPlayers <= 1 || players < 1) return null;
-        var (hp, attack) = Current();
+        var (hp, attack) = Current(rift);
         if (hp >= 100 && attack >= 100) return null;
         int Lerp(int solo) => solo + (100 - solo) * (players - 1) / (minPlayers - 1);
         return (Lerp(hp), Lerp(attack));
     }
 
-    private (int Hp, int Attack) Current()
+    private (int Hp, int Attack) Current(bool rift)
     {
         lock (gate)
         {
@@ -41,8 +42,10 @@ public sealed class DungeonSoloScale(IOptions<ServerOptions> options)
             {
                 checkedAt = now;
                 current = Read(Path.Combine(options.Value.DataDir, "dungeon-solo.json"));
+                string riftPath = Path.Combine(options.Value.DataDir, "rift-solo.json");
+                riftCurrent = File.Exists(riftPath) ? Read(riftPath) : current;
             }
-            return current;
+            return rift ? riftCurrent : current;
         }
     }
 

@@ -38,6 +38,16 @@ public sealed class DungeonSoloScaleTests : IDisposable
     }
 
     [Fact]
+    public void RiftCanUseItsOwnPercentWithoutChangingTheMvpScale()
+    {
+        File.WriteAllText(Path.Combine(dir, "rift-solo.json"), """{ "hpPercent": 75, "attackPercent": 75 }""");
+        var scale = Scale("""{ "hpPercent": 10, "attackPercent": 10 }""");
+        Assert.Equal((10, 10), scale.For(1, 3));
+        Assert.Equal((75, 75), scale.For(1, 3, rift: true));
+        Assert.Equal((90, 90), scale.For(3, 3, 5, rift: true));
+    }
+
+    [Fact]
     public void APartyWithItsMinimumButNotItsMaximumMeetsAWeakerBossPerMissingMember()
     {
         var scale = Scale(null);

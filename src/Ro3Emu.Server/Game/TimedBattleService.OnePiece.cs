@@ -476,7 +476,7 @@ public sealed partial class TimedBattleService
         {
             MonsterTemplate? template = null;
             var (min, max) = RiftPartySize();
-            if (a.Members.Length == 1 && _soloScale.For(1, min, max) is { } scale
+            if (a.Members.Length == 1 && _soloScale.For(1, min, max, rift: true) is { } scale
                 && _monsters.Template(a.Monster) is { } original)
                 template = original with
                 {

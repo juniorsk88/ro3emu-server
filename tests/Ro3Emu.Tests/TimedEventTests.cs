@@ -944,7 +944,8 @@ public sealed class TimedEventTests : IAsyncLifetime
     [ClientDataFact]
     public async Task RiftSoloUsesDungeonSoloScaleAndKeepsTheNormalRewards()
     {
-        await File.WriteAllTextAsync(Path.Combine(_dataDir, "dungeon-solo.json"), "{\"hpPercent\":50,\"attackPercent\":40}");
+        await File.WriteAllTextAsync(Path.Combine(_dataDir, "dungeon-solo.json"), "{\"hpPercent\":10,\"attackPercent\":10}");
+        await File.WriteAllTextAsync(Path.Combine(_dataDir, "rift-solo.json"), "{\"hpPercent\":75,\"attackPercent\":75}");
         var bots = await RiftPlayersAsync("Ada");
         await using var ada = bots[0];
         var stone = await GmRiftStoneAsync(ada, "!rift 1 Cat");
@@ -954,9 +955,9 @@ public sealed class TimedEventTests : IAsyncLifetime
         long instance = await RiftFightAsync(stone, ada);
         var boss = await RiftBossAsync(instance, stone.Boss);
         var original = Service<MonsterService>().Template(stone.Boss)!;
-        Assert.Equal(Math.Max(1, original.MaxHp / 2), boss.Template.MaxHp);
-        Assert.Equal(original.Atk * 40 / 100, boss.Template.Atk);
-        Assert.Equal(original.Matk * 40 / 100, boss.Template.Matk);
+        Assert.Equal(Math.Max(1, original.MaxHp * 75 / 100), boss.Template.MaxHp);
+        Assert.Equal(original.Atk * 75 / 100, boss.Template.Atk);
+        Assert.Equal(original.Matk * 75 / 100, boss.Template.Matk);
         await RiftKillAsync(ada, boss);
         var result = await Next(ada, DungeonService.Result, DungeonResNotify.Parser);
         Assert.Equal((DungeonRes)1, result.Res);

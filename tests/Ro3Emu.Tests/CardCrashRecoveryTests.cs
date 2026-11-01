@@ -202,10 +202,18 @@ public sealed class CardCrashRecoveryTests
         {
             command.CommandText = "SELECT exp,job_exp,currency FROM role WHERE id=$role";
             command.Parameters.AddWithValue("$role", role);
-            using var row = command.ExecuteReader();
-            Assert.True(row.Read());
-            exp = row.GetInt64(0); jobExp = row.GetInt64(1);
-            currency = string.Join(',', row.GetString(2).Split(',', StringSplitOptions.RemoveEmptyEntries).Order(StringComparer.Ordinal));
+            SqliteDataReader row;
+            try { row = command.ExecuteReader(); }
+            catch (SqliteException error)
+            {
+                throw new Xunit.Sdk.XunitException($"SQLite snapshot after process death failed: code={error.SqliteErrorCode}, extended={error.SqliteExtendedErrorCode}, message={error.Message}");
+            }
+            using (row)
+            {
+                Assert.True(row.Read());
+                exp = row.GetInt64(0); jobExp = row.GetInt64(1);
+                currency = string.Join(',', row.GetString(2).Split(',', StringSplitOptions.RemoveEmptyEntries).Order(StringComparer.Ordinal));
+            }
         }
         var items = new List<string>();
         using (var command = db.CreateCommand())
