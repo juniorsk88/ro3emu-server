@@ -116,12 +116,23 @@ namespace Ro3Emu.ClientHooks
                         if (HuntClient.Inject(loaded, _global)) CustomNpcClient.Hello(loaded, _global);
                         Job50Client.Tick(loaded, _global);
                         PetShopClient.Inject(loaded, _global);
+                        AllowManualRedEquipment(loaded);
                     }
                 }
                 catch (Exception e) { Debug.LogWarning("[Ro3Emu.Pass] row check failed: " + e.Message); }
             }
             if (_openInTicks <= 0 || --_openInTicks > 0) return;
             Open();
+        }
+
+        private static void AllowManualRedEquipment(Obf_R.Obf_ff manager)
+        {
+            var row = Values(manager, "m_kCFG_DecomposeConditionConfig")?.Obf_ruA<long, Obf_R.Obf_ff>(2L);
+            var options = row?.Obf_RuA<Obf_R.Obf_ff>("_kParam");
+            if (options == null) return;
+            for (long i = 1; i <= 5; i++)
+                if (LuaPatches.ToLong(options.Obf_ruA<long, object>(i)) != i) return;
+            if (options.Obf_ruA<long, object>(6L) == null) RawSet(options, 6L, 6L);
         }
 
         /// <summary>Lua_DBManager:ReLoadAllCfg(): the original, then our rows into the fresh configs.</summary>
