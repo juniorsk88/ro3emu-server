@@ -87,6 +87,8 @@ public sealed partial class CombatService
                 _log.LogDebug(e, "Card hit {Skill} on {Uid} not settled", skillId, m.Uid);
                 return;
             }
+            if (Current())
+                foreach (var handler in AdditionalPlayerDamage) await handler(s, amount);
             var hit = new SkillHitInfo
             {
                 SrcID = role.Id, SkillId = skillId, SessionId = ++_sessionIds, SrcElement = 1,

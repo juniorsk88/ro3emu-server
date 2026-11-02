@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using Romsg;
 using Ro3Emu.Bot;
 using Ro3Emu.Server;
+using Ro3Emu.Server.Accounts;
 using Ro3Emu.Server.Data;
 using Ro3Emu.Server.Game;
 using Ro3Emu.Server.Maps;
@@ -410,6 +411,42 @@ public sealed class BuffRulesTests : IAsyncLifetime
         // Removing the curse ends the ticks.
         await Run(() => Buffs.RemoveAsync(p, p.Buffs.Single(b => b.ConfigId == 5001801)));
         await Eventually(() => Buffs.PeriodicCount == 0, "the tick entry dropping");
+    }
+
+    [ClientDataFact]
+    public async Task HunterFlyHealsFromPlayerBurnAgainstMonster()
+    {
+        await Server();
+        await using var alice = await InWorld("Alice");
+        var monster = await Monster("alice", 1);
+        var player = Session("alice");
+        var character = _app!.Services.GetRequiredService<CharacterService>();
+        var cards = _app.Services.GetRequiredService<CardEffects>();
+        cards.Roll = _ => 0;
+        try
+        {
+            await Run(async () =>
+            {
+                player.Progress!.Stats[3] = 200;
+                player.Items.Add(new InvItem { Guid = 880112, Entry = 1430118, Stack = 1, Pack = 3,
+                    Grid = CharacterService.CardGrid(1, 1), Attrs = new() { [502] = 3 } });
+                player.StatusBits |= 1L << 15;
+                player.LastCombatMs = MonsterService.NowMs;
+                await character.SetHpSpAsync(player, 1, null);
+                monster.Hp = 100_000;
+                await Buffs.ShowOnUnitAsync(monster, 902701, 3000, player.Role!.Id);
+            });
+            var hit = await Next(alice, CombatService.SkillHit, SkillHitInfo.Parser,
+                h => h.SrcID == player.Role!.Id && h.Dsts.Any(d => d.DstID == monster.Uid));
+            long damage = hit.Dsts.Single(d => d.DstID == monster.Uid).Damage;
+            Assert.True(damage >= 10);
+            await Run(() =>
+            {
+                Assert.Equal(Math.Min(character.Stats(player)[101], 1 + Math.Min(2000, damage / 10)), character.Stats(player)[2000]);
+                return Task.CompletedTask;
+            });
+        }
+        finally { cards.Roll = bound => Random.Shared.Next(bound); }
     }
 
     [ClientDataFact]

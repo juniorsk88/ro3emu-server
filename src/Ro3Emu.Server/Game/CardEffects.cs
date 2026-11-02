@@ -111,6 +111,7 @@ public sealed class CardEffects
         scenes.Loaded.Add(RefreshAsync);
         combat.DamageAdjusters.Add(AdjustDamage);
         combat.DealtAsync.Add(OnDealtAsync);
+        combat.AdditionalPlayerDamage.Add(OnAdditionalPlayerDamageAsync);
         combat.ExtraHitDamage.Add(ExtraHit);
         combat.SkillCooldownStarted.Add(OnCooldownStartedAsync);
         combat.IncomingHitNegators.Add(NegateMagicHit);
@@ -230,6 +231,23 @@ public sealed class CardEffects
         }
     }
 
+    private async Task ApplyLifeStealAsync(GameSession session, long damage, long chance, double[] desc)
+    {
+        if (damage <= 0 || session.Role == null || session.Dead || desc.Length < 4
+            || Roll(10000) >= chance || !Ready(session, LifeStealGroup, (long)(desc[3] * 1000))) return;
+        long heal = Math.Min((long)desc[2], (long)Math.Floor(damage * desc[1] / 100));
+        if (heal <= 0) return;
+        var stats = _character.Stats(session);
+        await _character.SetHpSpAsync(session, stats[2000] + heal, null);
+    }
+
+    private async Task OnAdditionalPlayerDamageAsync(GameSession session, long damage)
+    {
+        if (damage <= 0 || session.Role == null || session.Dead) return;
+        foreach (var (_, group, chance, desc) in Procs(Passives(session).ToList()))
+            if (group == LifeStealGroup) await ApplyLifeStealAsync(session, damage, chance, desc);
+    }
+
     internal async Task OnDealtAsync(GameSession s, MonsterUnit target, JsonElement skillRow, long damage)
     {
         if (damage <= 0 || s.Role == null || s.Dead) return;
@@ -241,11 +259,7 @@ public sealed class CardEffects
             if (group == LifeStealGroup)
             {
                 // "has a @{1}% Chance to restore Life equal to @{2}% of the damage dealt, up to @{3}. Cooldown @{4} sec."
-                if (desc.Length < 4 || Roll(10000) >= chance || !Ready(s, group, (long)(desc[3] * 1000))) continue;
-                long heal = Math.Min((long)desc[2], (long)Math.Floor(damage * desc[1] / 100));
-                if (heal <= 0) continue;
-                var stats = _character.Stats(s);
-                await _character.SetHpSpAsync(s, stats[2000] + heal, null);
+                await ApplyLifeStealAsync(s, damage, chance, desc);
             }
             else if (group == SpDrainGroup)
             {
@@ -408,6 +422,11 @@ public sealed class CardEffects
             }
             foreach (var (_, group, chance, desc) in Procs(Passives(attacker).ToList()))
             {
+                if (group == LifeStealGroup)
+                {
+                    await ApplyLifeStealAsync(attacker, damage, chance, desc);
+                    continue;
+                }
                 if (group != SpDrainGroup || desc.Length < 4 || Roll(10000) >= chance || !Ready(attacker, group, (long)(desc[3] * 1000))) continue;
                 long sp = _character.Stats(target)[2001];
                 long drain = Math.Min((long)desc[2], (long)Math.Floor(sp * desc[1] / 100));

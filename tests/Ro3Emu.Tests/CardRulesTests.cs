@@ -265,6 +265,78 @@ public sealed class CardRulesTests : IAsyncLifetime
     }
 
     [ClientDataFact]
+    public async Task HunterFlyThreeStarStacksChanceAndRespectsHealingCapAndCooldown()
+    {
+        await using var alice = await InWorld("Alice");
+        var session = Session("Alice");
+        var effects = Service<CardEffects>();
+        var character = Service<CharacterService>();
+        var template = Service<MonsterService>().Template(5000001)!;
+        var point = new SpawnPoint(-1, 0, 0, 0, 0, 5000001);
+        var monster = new MonsterUnit { Uid = 1L << 48, SceneEntry = session.SceneEntry, Template = template,
+            Hp = template.MaxHp, Group = new SpawnGroup(-1, false, 1, 0, [], [point]), Home = point };
+        var skill = Service<GameData>().Row("SkillConfig", 1000001)!.Value;
+        try
+        {
+            await Service<GameLoop>().InvokeAsync(async () =>
+            {
+                session.Progress!.Stats[2] = 1000;
+                session.Items.Add(new InvItem { Guid = 880101, Entry = 1430118, Stack = 1, Pack = 3,
+                    Grid = CharacterService.CardGrid(1, 1), Attrs = new() { [502] = 3 } });
+                session.Items.Add(new InvItem { Guid = 880102, Entry = 1430118, Stack = 1, Pack = 3,
+                    Grid = CharacterService.CardGrid(1, 4), Attrs = new() { [502] = 3 } });
+                Assert.True(character.Stats(session)[101] > 3001);
+                await character.SetHpSpAsync(session, 1, null);
+                effects.Roll = _ => 800;
+                await effects.OnDealtAsync(session, monster, skill, 10000);
+                Assert.Equal(1, character.Stats(session)[2000]);
+                effects.Roll = _ => 799;
+                await effects.OnDealtAsync(session, monster, skill, 10000);
+                Assert.Equal(1001, character.Stats(session)[2000]);
+                await effects.OnDealtAsync(session, monster, skill, 10000);
+                Assert.Equal(1001, character.Stats(session)[2000]);
+            });
+            await Task.Delay(2100);
+            await Service<GameLoop>().InvokeAsync(async () =>
+            {
+                session.CurrentHp = 1001; // Exclude any natural regeneration during the cooldown wait.
+                await effects.OnDealtAsync(session, monster, skill, 100000);
+                Assert.Equal(3001, character.Stats(session)[2000]);
+            });
+        }
+        finally { effects.Roll = bound => Random.Shared.Next(bound); }
+    }
+
+    [ClientDataFact]
+    public async Task HunterFlyHealsInPlayerCombatAndSharesCooldownWithAdditionalDamage()
+    {
+        await using var alice = await InWorld("Alice");
+        await using var bob = await InWorld("Bob");
+        var attacker = Session("Alice");
+        var target = Session("Bob");
+        var effects = Service<CardEffects>();
+        var character = Service<CharacterService>();
+        var skill = Service<GameData>().Row("SkillConfig", 1000001)!.Value;
+        effects.Roll = _ => 0;
+        try
+        {
+            await Service<GameLoop>().InvokeAsync(async () =>
+            {
+                attacker.Progress!.Stats[2] = 1000;
+                attacker.Items.Add(new InvItem { Guid = 880111, Entry = 1430118, Stack = 1, Pack = 3,
+                    Grid = CharacterService.CardGrid(1, 1), Attrs = new() { [502] = 3 } });
+                await character.SetHpSpAsync(attacker, 1, null);
+                Assert.True(character.Stats(attacker)[101] > 101);
+                await effects.OnPvpHitTakenAsync(attacker, target, skill, 1000);
+                Assert.Equal(101, character.Stats(attacker)[2000]);
+                foreach (var handler in Service<CombatService>().AdditionalPlayerDamage) await handler(attacker, 1000);
+                Assert.Equal(101, character.Stats(attacker)[2000]);
+            });
+        }
+        finally { effects.Roll = bound => Random.Shared.Next(bound); }
+    }
+
+    [ClientDataFact]
     public async Task CardProcsInflictTheirStatusAndSizeCardsRaiseDamage()
     {
         const int stun = 1420101, size = 1460100; // [[2, 2000001], [2, 2000101]]; [[2, 2050101]] (+7.5%)

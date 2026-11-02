@@ -268,6 +268,7 @@ public sealed partial class CombatService : IGameTicker
 
     private int ArmorElement(GameSession p) => ArmorElementOf?.Invoke(p) is > 0 and var e ? e : 1;
     public List<Func<GameSession, MonsterUnit, JsonElement, long, Task>> DealtAsync { get; } = new();
+    internal List<Func<GameSession, long, Task>> AdditionalPlayerDamage { get; } = new();
     public List<Func<GameSession, long, long>> ExtraHeal { get; } = new();
     public List<Func<MonsterUnit, GameSession, DamageHitResult, long, Task<long>>> IncomingDamageAdjusters { get; } = new();
     public List<Func<MonsterUnit, GameSession, long, Task>> TakenAsync { get; } = new();

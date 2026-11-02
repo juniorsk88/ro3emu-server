@@ -165,6 +165,8 @@ public sealed partial class CombatService
                 _log.LogDebug(e, "Periodic tick of {Buff} on {Uid} not settled", buff.ConfigId, m.Uid);
                 return;
             }
+            if (Current())
+                foreach (var handler in AdditionalPlayerDamage) await handler(s, amount);
             var hit = new SkillHitInfo
             {
                 SrcID = role.Id, SessionId = ++_sessionIds, SrcElement = rule.Element,
