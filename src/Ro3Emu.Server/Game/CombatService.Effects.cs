@@ -41,6 +41,11 @@ public sealed partial class CombatService
 {
     private long _skillObjectIds = 0x600000000000L;
 
+    /// <summary>Storm Gust shoves a target it did not freeze: a random 3 m slide, sent as ordinary movement so no
+    /// skill effect (and no Jupitel Thunder lightning) is drawn.</summary>
+    private const float StormGustPushMeters = 3f;
+    private const int StormGustPushMs = 180;
+
     private async Task ResolveCastAsync(GameSession s, ActiveSkillCast action)
     {
         var row = action.Row;
@@ -199,6 +204,8 @@ public sealed partial class CombatService
             {
                 if (!CanApplyMoreEffects()) break; // a previous target's awaited callback may have invalidated the caster
                 if (target.Dead || target.Hp <= 0) continue; // another awaited cast may already own this death source
+                // Storm Gust stops hurting a target it has already frozen: the remaining waves pass it by.
+                if (field != null && script == "Storm_Gust" && _buffs.UnitHasGroup(target, BuffService.FreezeGroup)) continue;
                 processed.Add(target);
                 if (damage)
                 {
@@ -239,6 +246,9 @@ public sealed partial class CombatService
                                 attributeMultiplier: GuardianPetRules.BuffMultiplier(row), guardianOwned: IsGuardianEffect(row));
                 if (CanApplyMoreEffects() && script is ("Provoke" or "Taunt")) _monsters.Engage(target, s);
                 if (CanApplyMoreEffects() && !target.Dead && target.Hp > 0) await DisplaceTargetAsync(s, action, target, center);
+                if (CanApplyMoreEffects() && script == "Storm_Gust" && !target.Dead && target.Hp > 0
+                    && !_buffs.UnitHasGroup(target, BuffService.FreezeGroup))
+                    await PushRandomAsync(target);
             }
             // Buff1 is self for hostile selectors, but actual friend recipients for ally selectors (Detoxify, Blessing).
             foreach (var recipient in friendly ? allies : new List<GameSession> { s })
@@ -670,6 +680,43 @@ public sealed partial class CombatService
             MoveTimeMs = move.Ms > 0 ? move.Ms : 300,
         });
         await _world.MoveUnitAsync(target, new MovementChangeNtf { Uid = target.Uid, MovementInfo = target.CurrentMovement(Now) });
+    }
+
+    /// <summary>Storm Gust's unanswered wave: a random 3 m slide, with no skill effect attached.</summary>
+    private async Task PushRandomAsync(MonsterUnit target)
+    {
+        if (_buffs.UnitImmuneToDisplacement(target)) return;
+        var start = target.Pos;
+        double angle = Random.Shared.NextDouble() * Math.PI * 2;
+        var end = WalkableEnd(target.SceneEntry, start, (float)Math.Cos(angle) * StormGustPushMeters, (float)Math.Sin(angle) * StormGustPushMeters);
+        float length = Distance(start, end);
+        if (length < 0.05f) return;
+        long now = Now;
+        float speed = length * 1000f / StormGustPushMs;
+        // Same shape as MonsterService.WalkTo, except that the authoritative position is already the destination: the
+        // client plays the slide, the server does not queue a second walk when the AI ticks.
+        target.FromX = start.X; target.FromY = start.Y; target.FromZ = start.Z;
+        target.ToX = end.X; target.ToY = end.Y; target.ToZ = end.Z;
+        target.StartMs = now; target.EndMs = now + StormGustPushMs; target.SegmentSpeed = speed;
+        target.Moving = false;
+        target.X = end.X; target.Y = end.Y; target.Z = end.Z;
+        await _world.MoveUnitAsync(target, new MovementChangeNtf
+        {
+            Uid = target.Uid,
+            TransType = MovementTransitionType.MoveTransNormal,
+            MovementInfo = new MovementInfo
+            {
+                Pos = new Vec3 { X = start.X, Y = start.Y, Z = start.Z },
+                ServerTime = now,
+                MoveDuration = StormGustPushMs,
+                Face = target.Face,
+                MoveType = MovementType.MoveTypeWalk,
+                MovementWalk = new MovementWalk
+                {
+                    Dir = MonsterService.Angle(start.X, start.Z, end.X, end.Z), Speed = speed, Acc = 0, EndHeight = end.Y,
+                },
+            },
+        });
     }
 
     /// <summary>A PvP hit's knockback or pull of the player it struck, as the same skill moves a monster.</summary>
