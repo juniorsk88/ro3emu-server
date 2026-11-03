@@ -116,6 +116,7 @@ namespace Ro3Emu.ClientHooks
                         if (HuntClient.Inject(loaded, _global)) CustomNpcClient.Hello(loaded, _global);
                         Job50Client.Tick(loaded, _global);
                         PetShopClient.Inject(loaded, _global);
+                        StormSkillDescriptions.Inject(loaded, _global);
                         AllowManualRedEquipment(loaded);
                     }
                 }

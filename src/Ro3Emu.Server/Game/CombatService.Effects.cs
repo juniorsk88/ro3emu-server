@@ -17,6 +17,7 @@ public sealed class SkillObject : WorldUnit
     public required long ExpiresMs { get; init; }
     public long NextTickMs { get; set; }
     public int IntervalMs { get; init; }
+    public int MeteorWavesRemaining { get; set; }
     public float Radius { get; init; }
     public bool Trap { get; init; }
     public bool Busy { get; set; }
@@ -191,7 +192,7 @@ public sealed partial class CombatService
         {
             SrcID = field?.Uid ?? action.SourceId, SkillId = action.Request.SkillId, SessionId = action.Id,
             RootCtxGuid = action.Id, ComboIndex = action.Request.ComboIndex, ShowPoint = VisualOf(row).HitEffect,
-            Split = HitSplit(row),
+            Split = field != null && script == "Meteor_Storm" ? 1 : HitSplit(row),
             SrcElement = HitElement(s, row),
         };
         var killed = new List<MonsterUnit>();
@@ -811,6 +812,8 @@ public sealed partial class CombatService
                 }
                 break;
         }
+        int meteorWaves = script == "Meteor_Storm" ? (int)Math.Clamp(new SkillConfig(row).Level, 1, 10) : 0;
+        if (meteorWaves > 0) { duration = 10000; interval = duration / meteorWaves; }
         if (npc == 0 || _data.Row("NPCConfig", npc) is not { } npcRow) return false;
         if (trap)
         {
@@ -825,7 +828,7 @@ public sealed partial class CombatService
             OwnerSession = s, OwnerId = s.Role!.Id,
             NpcId = npc, EntityType = (int)GameData.Int(npcRow, "_iNPCType"), Cast = action,
             X = point.X, Y = point.Y, Z = point.Z, Face = action.Request.Face, ExpiresMs = Now + Math.Max(1, duration),
-            IntervalMs = Math.Max(50, interval), NextTickMs = Now, Radius = radius, Trap = trap,
+            IntervalMs = Math.Max(50, interval), NextTickMs = Now, Radius = radius, Trap = trap, MeteorWavesRemaining = meteorWaves,
             ProtectionDistanceType = protection, Charges = charges,
             TouchLimit = script == "Fire_Wall" && Numbers(row, "_kDescData") is { Length: > 6 } wallDesc ? (int)wallDesc[6] : 0,
         };
@@ -857,7 +860,7 @@ public sealed partial class CombatService
         try
         {
             var owner = unit.OwnerSession;
-            if (Now >= unit.ExpiresMs || owner.Role?.Id != unit.OwnerId || owner.SceneLoading || owner.Dead
+            if ((Now >= unit.ExpiresMs && unit.MeteorWavesRemaining == 0) || owner.Role?.Id != unit.OwnerId || owner.SceneLoading || owner.Dead
                 || owner.WorldScene != unit.WorldScene || owner.SceneGeneration != unit.Cast.SceneGeneration
                 || !ReferenceEquals(owner.Attachment, unit.Cast.Attachment) || unit.Cast.Attachment?.Cancelled == true)
             {
@@ -865,6 +868,15 @@ public sealed partial class CombatService
                 return;
             }
             if (Now < unit.NextTickMs) return;
+            if (unit.MeteorWavesRemaining > 0)
+            {
+                unit.NextTickMs += unit.IntervalMs;
+                unit.MeteorWavesRemaining--;
+                for (int hit = 0; hit < 10 && !unit.Removing; hit++)
+                    await ApplyEffectsAsync(owner, unit.Cast, unit.Pos, unit);
+                return;
+            }
+            if (Script(unit.Cast.Row) == "Meteor_Storm") return;
             unit.NextTickMs = Now + unit.IntervalMs;
             if (unit.ProtectionDistanceType != 0) return;
             if (unit.Trap && !_world.Map(unit.WorldScene).Near(unit.X, unit.Z, 1.5f).OfType<MonsterUnit>().Any(m => !m.Dead && Distance(m.Pos, unit.Pos) <= 1.5f)) return;

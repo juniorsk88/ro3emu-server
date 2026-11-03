@@ -235,8 +235,8 @@ public sealed class CreditShopTests : IAsyncLifetime
         var shop = _app.Services.GetRequiredService<CreditShop>();
         SetCredits("leaver", 20);
         string id = OrderIdOf(await Order(bot, chargeType: 1, chargeId: 15));
-        ApproveLikeThePanel(id, "leaver", 14.99);
         using (var db = Open()) Exec(db, "UPDATE panel_order SET role_id = 987654321 WHERE id = $i", ("$i", id)); // that role is not in the game
+        ApproveLikeThePanel(id, "leaver", 14.99); // Only approve after selecting the offline recipient; the delivery poller may run immediately.
 
         await DeliverAsync(shop, id);
         using var check = Open();
