@@ -44,7 +44,7 @@ public sealed class CoreMessages(Microsoft.Extensions.Options.IOptions<ServerOpt
         // Sets one flag on the sender's own session, nothing shared; the client repeats it, also before it has a role.
         routes.AdmitRuntime(id => id is MonsterService.LevelUpFxHello, "client/level-up effect hello");
         routes.AdmitRuntime(id => id is SceneService.CustomNpcHello, "client/custom NPC rows hello");
-        routes.Map(SceneService.CustomNpcHello, "custom-npcs", (session, _, _) => scene.CustomNpcHelloAsync(session));
+        routes.Map(SceneService.CustomNpcHello, "custom-npcs", (session, _, body) => scene.CustomNpcHelloAsync(session, body.Span.SequenceEqual("npc-v2"u8)));
         routes.AdmitRole(id => id is SceneService.Job50Hello);
         routes.Map(SceneService.Job50Hello, "job50", (session, _, _) => scene.Job50HelloAsync(session));
         routes.Map(MonsterService.LevelUpFxHello, "monster-fx", (session, _, _) =>

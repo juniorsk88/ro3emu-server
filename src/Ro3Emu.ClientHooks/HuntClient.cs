@@ -7,7 +7,7 @@ namespace Ro3Emu.ClientHooks
     internal static class HuntClient
     {
         internal const long Npc = 990034, Dialog = 99003401, Accept = 99003402, Deliver = 99003403;
-        private const long FirstTask = 99010001, TextBase = 99130003000;
+        private const long FirstTask = 99010001, EasierFirstTask = 99011001, TextBase = 99130003000;
 
         internal static bool Inject(Obf_R.Obf_ff dbm, Obf_R.Obf_ff global)
         {
@@ -44,7 +44,7 @@ namespace Ro3Emu.ClientHooks
             if (CustomNpcClient.Exists(rawget, npcs, Npc) && CustomNpcClient.Exists(rawget, interactions, Dialog)
                 && CustomNpcClient.Exists(rawget, interactions, Accept) && CustomNpcClient.Exists(rawget, interactions, Deliver)
                 && CustomNpcClient.Exists(rawget, dialogues, Dialog) && CustomNpcClient.Exists(rawget, tasks, FirstTask)
-                && CustomNpcClient.Exists(rawget, tasks, FirstTask + 98) && CustomNpcClient.Exists(rawget, texts, TextBase + 99)) return true;
+                && CustomNpcClient.Exists(rawget, tasks, FirstTask + 98) && CustomNpcClient.Exists(rawget, tasks, EasierFirstTask + 98) && CustomNpcClient.Exists(rawget, texts, TextBase + 99)) return true;
             var template = npcs.Obf_ruA<long, Obf_R.Obf_ff>(400034L);
             var interaction = interactions.Obf_ruA<long, Obf_R.Obf_ff>(40003401L);
             var taskTemplate = tasks.Obf_ruA<long, Obf_R.Obf_ff>(201000L);
@@ -74,9 +74,11 @@ namespace Ro3Emu.ClientHooks
             var close = PassChallenges.Row(NpcShops.ToPairs(NpcServiceTable.OptionFields(Dialog, Npc, 4, leave)));
             PassChallenges.RawSet(dialogues, Dialog, PassChallenges.List(line, accept, deliver, close));
             var waypoints = new Dictionary<(int, int), long>();
+            foreach (bool easier in new[] { false, true })
             for (int level = 1; level <= 99; level++)
             {
-                var (monster, map) = HuntTargets.ForLevel(level);
+                var (monster, map) = easier ? HuntTargets.ForLevel(level) : HuntTargets.LegacyForLevel(level);
+                long firstTask = easier ? EasierFirstTask : FirstTask;
                 var monsterRow = npcs.Obf_ruA<long, Obf_R.Obf_ff>(monster);
                 var mapRow = maps.Obf_ruA<long, Obf_R.Obf_ff>(map);
                 var monsterName = Translate(trans, monsterRow?.Obf_RuA<Obf_R.Obf_ff>("_kName"));
@@ -88,12 +90,12 @@ namespace Ro3Emu.ClientHooks
                     if (waypoint <= 0) return false;
                     waypoints[(monster, map)] = waypoint;
                 }
-                long text = TextBase + level;
-                long targetText = TextBase + 200 + level;
+                long text = TextBase + level + (easier ? 400 : 0);
+                long targetText = TextBase + 200 + level + (easier ? 400 : 0);
                 PassChallenges.Text(texts, text, "Caçada: " + monsterName);
                 PassChallenges.Text(texts, targetText, mapName + ": Derrote " + monsterName + "*");
                 var task = CustomNpcClient.Inherit(global, taskTemplate);
-                PassChallenges.RawSet(task, "_iTaskID", FirstTask + level - 1);
+                PassChallenges.RawSet(task, "_iTaskID", firstTask + level - 1);
                 PassChallenges.RawSet(task, "_iName", PassChallenges.List(text));
                 PassChallenges.RawSet(task, "_iTaskDescribe", PassChallenges.List(text));
                 PassChallenges.RawSet(task, "_iTargetDescribe", PassChallenges.List(targetText));
@@ -117,7 +119,7 @@ namespace Ro3Emu.ClientHooks
                 PassChallenges.RawSet(task, "_kTrack", track);
                 PassChallenges.RawSet(task, "_kPCTrack", track);
                 PassChallenges.RawSet(task, "_kEXP", PassChallenges.List());
-                PassChallenges.RawSet(tasks, FirstTask + level - 1, task);
+                PassChallenges.RawSet(tasks, firstTask + level - 1, task);
             }
             return true;
         }

@@ -8,12 +8,13 @@ internal static class HuntTaskRows
     internal static void AddTo(Dictionary<string, JsonElement> table)
     {
         if (!table.TryGetValue("201000", out var source)) return;
+        foreach (bool easier in new[] { false, true })
         for (int level = 1; level <= 99; level++)
         {
-            long id = Game.HuntCatalog.FirstTask + level - 1;
+            long id = Game.HuntCatalog.FirstFor(easier) + level - 1;
             string key = id.ToString(System.Globalization.CultureInfo.InvariantCulture);
             if (table.ContainsKey(key)) throw new InvalidOperationException($"Hunt task {id} collides with client data.");
-            var (npc, map) = Game.HuntCatalog.ForLevel(level);
+            var (npc, map) = easier ? Game.HuntTargets.ForLevel(level) : Game.HuntTargets.LegacyForLevel(level);
             var row = JsonNode.Parse(source.GetRawText())!.AsObject();
             row["_iTaskID"] = id;
             row["_iTaskType"] = 2;

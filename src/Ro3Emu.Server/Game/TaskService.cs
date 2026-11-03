@@ -367,7 +367,7 @@ public sealed partial class TaskService
         int result = session.Tasks == null ? ErrorCodes.Unknown
             : !defs.TryGetValue(req.Id, out var def) ? ErrorCodes.TaskNoConfig
             : HuntCatalog.IsHunt(req.Id) && (!session.CustomNpcRows || !new CustomNpcSettings(options).Read().Hunter
-                || session.Progress == null || req.Id != HuntCatalog.FirstTask + Math.Clamp(session.Progress.Level, 1, 99) - 1
+                || session.Progress == null || req.Id != HuntCatalog.FirstFor(session.EasierHunts) + Math.Clamp(session.Progress.Level, 1, 99) - 1
                 || session.Tasks.Infos.Any(x => HuntCatalog.IsHunt(x.Key) && Active(session, x.Key))
                 || !CanUseHunter(session, req.NpcId))
                 ? ErrorCodes.TaskRequirements
@@ -714,7 +714,7 @@ public sealed partial class TaskService
     private async Task HuntActionAsync(GameSession session, WorldNpc npc, int action)
     {
         if (session.Progress == null || session.Tasks == null) return;
-        long current = HuntCatalog.FirstTask + Math.Clamp(session.Progress.Level, 1, 99) - 1;
+        long current = HuntCatalog.FirstFor(session.EasierHunts) + Math.Clamp(session.Progress.Level, 1, 99) - 1;
         if (action == CustomNpcSettings.HunterAccept)
             await AcceptAsync(session, new TaskAcceptReq { Id = current, NpcId = npc.Uid });
         else if (action == CustomNpcSettings.HunterDeliver)

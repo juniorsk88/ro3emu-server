@@ -18,7 +18,8 @@ public sealed partial class MapTests
         foreach (int level in Enumerable.Range(1, 99))
         {
             var (npc, mapId) = HuntCatalog.ForLevel(level);
-            var task = data.Row("TaskConfig", HuntCatalog.FirstTask + level - 1);
+            var task = data.Row("TaskConfig", HuntCatalog.EasierFirstTask + level - 1);
+            if (level >= 3) Assert.True(GameData.Int(data.Row("NPCConfig", npc)!.Value, "_iLevel") < level, $"Level {level}, NPC {npc}");
             Assert.NotNull(task);
             var target = task.Value.GetProperty("_kProgressTarget")[0];
             Assert.Equal(npc, target[1].GetInt32());
@@ -35,8 +36,10 @@ public sealed partial class MapTests
         }
     }
 
-    [ClientDataFact]
-    public async Task HunterAcceptsAndPaysRepeatableQuestsOncePerCompletion()
+    [ClientDataTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task HunterAcceptsAndPaysRepeatableQuestsOncePerCompletion(bool easier)
     {
         await using var alice = await InWorld("Alice");
         await Next(alice, GameAoiSink.SyncAoiView, AoIViewChangeData.Parser);
@@ -57,10 +60,11 @@ public sealed partial class MapTests
         var combat = _app.Services.GetRequiredService<CombatService>();
         var monsters = _app.Services.GetRequiredService<MonsterService>();
         var onKill = combat.Killed.Single(h => h.Target is TaskService);
-        var (targetNpc, targetMap) = HuntCatalog.ForLevel(20);
+        await loop.InvokeAsync(() => _app.Services.GetRequiredService<SceneService>().CustomNpcHelloAsync(session, easier));
+        var (targetNpc, targetMap) = easier ? HuntTargets.ForLevel(20) : HuntTargets.LegacyForLevel(20);
         var before = await loop.InvokeAsync(() => Task.FromResult((session.Progress!.Exp, session.Progress.JobExp,
             character.HuntReward(session.Progress))));
-        long taskId = HuntCatalog.FirstTask + 19;
+        long taskId = HuntCatalog.FirstFor(easier) + 19;
         await alice.SendGameAsync(TaskService.TaskAccept, new TaskAcceptReq { Id = taskId, NpcId = 0 });
         var refused = await Next(alice, TaskService.ApiError, APIErrorMsg.Parser, e => e.OriginMsgId == TaskService.TaskAccept);
         Assert.Equal(ErrorCodes.TaskRequirements, refused.ErrorCode);
