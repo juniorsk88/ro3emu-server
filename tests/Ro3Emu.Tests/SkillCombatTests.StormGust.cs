@@ -9,22 +9,33 @@ namespace Ro3Emu.Tests;
 
 public sealed partial class SkillCombatTests
 {
+    /// <summary>Stable damage with hostile status procs disabled (the 10% freeze would otherwise cut the waves short).</summary>
+    private sealed class NoProcDamageRolls : CombatRolls
+    {
+        public override double Hit() => 0;
+        public override double Crit() => 1;
+        public override double DamageFloat() => 0.5;
+        public override int Proc(int max) => max - 1;
+    }
+
     [ClientDataFact]
-    public async Task StormGustDealsFiveConfiguredWavesAndSplitsOnlyTheDisplay()
+    public async Task StormGustDealsOneWavePerLevelAndSplitsOnlyTheDisplay()
     {
         await using var alice = await InWorld("Alice");
         await MageAsync("alice");
         var source = Session("alice");
         var target = await Target("alice", stationary: true);
         long initialHp = 1_000_000;
-        long matk = await Loop.InvokeAsync(() =>
+        long matk = await Loop.InvokeAsync(async () =>
         {
-            _app.Services.GetRequiredService<CombatService>().Rolls = new GuardianStableDamageRolls();
+            _app.Services.GetRequiredService<CombatService>().Rolls = new NoProcDamageRolls();
             _app.Services.GetRequiredService<IOptions<ServerOptions>>().Value.DamageBonusAttributes = false;
             source.Progress!.Skills[12108] = 10;
             target.Template = target.Template with { SpeedCm = 0, AttackRange = 0, Mdef = 0, Element = 1 };
             target.Hp = initialHp;
-            return Task.FromResult(Character.Stats(source)[104]);
+            // Super Armor (category 19) keeps the random shove from walking the target out of the 5 m field.
+            await _app.Services.GetRequiredService<BuffService>().AddSupportAsync(target, 903101, 120_000, target.Uid);
+            return Character.Stats(source)[104];
         });
         CastSkillRsp cast;
         for (int attempt = 0; ; attempt++)
@@ -37,17 +48,51 @@ public sealed partial class SkillCombatTests
         }
         Assert.Equal(0, cast.Result);
         var hits = new List<long>();
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < 10; i++)
         {
             var hit = await Next(alice, CombatService.SkillHit, SkillHitInfo.Parser,
                 h => h.SessionId == cast.SessionId && h.Dsts.Any(d => d.DstID == target.Uid));
             Assert.Equal(3, hit.Split);
             hits.Add(Assert.Single(hit.Dsts, d => d.DstID == target.Uid).Damage);
         }
-        long expected = (long)Math.Round(matk * 0.1 + 130);
+        // One wave per level: 10 waves, each a third of Jupitel Thunder Nv.10 (MATK * 50% + 33).
+        long expected = (long)Math.Round(matk * 0.5 + 33);
         Assert.All(hits, damage => Assert.Equal(expected, damage));
-        Assert.Equal(initialHp - 5 * expected, await Loop.InvokeAsync(() => Task.FromResult(target.Hp)));
+        Assert.Equal(initialHp - 10 * expected, await Loop.InvokeAsync(() => Task.FromResult(target.Hp)));
     }
+
+    [ClientDataFact]
+    public async Task StormGustShovesATargetItDidNotFreeze()
+    {
+        await using var alice = await InWorld("Alice");
+        await MageAsync("alice");
+        var source = Session("alice");
+        var target = await Target("alice", stationary: true);
+        var start = await Loop.InvokeAsync(() =>
+        {
+            _app.Services.GetRequiredService<CombatService>().Rolls = new NoProcDamageRolls();
+            source.Progress!.Skills[12108] = 1;
+            target.Template = target.Template with { SpeedCm = 0, AttackRange = 0, Mdef = 0, Element = 1 };
+            target.Hp = 1_000_000;
+            return Task.FromResult(target.Pos.Clone());
+        });
+        CastSkillRsp cast;
+        for (int attempt = 0; ; attempt++)
+        {
+            await Loop.InvokeAsync(() => { source.Progress!.Skills[12108] = 1; return Task.CompletedTask; });
+            await alice.SendGameAsync(CombatService.UseSkill, new CastSkillReq { SkillId = 1210801, TargetPos = source.Position.Clone() });
+            cast = await Next(alice, CombatService.UseSkill, CastSkillRsp.Parser);
+            if (cast.Result != ErrorCodes.SkillNotLearned || attempt >= 20) break;
+            await Task.Delay(100);
+        }
+        Assert.Equal(0, cast.Result);
+        await Next(alice, CombatService.SkillHit, SkillHitInfo.Parser,
+            h => h.SessionId == cast.SessionId && h.Dsts.Any(d => d.DstID == target.Uid));
+        var end = await Loop.InvokeAsync(() => Task.FromResult(target.Pos.Clone()));
+        float moved = MathF.Sqrt((end.X - start.X) * (end.X - start.X) + (end.Z - start.Z) * (end.Z - start.Z));
+        Assert.True(moved > 0.5f, $"expected a knockback of up to 3 m, moved {moved:0.00} m");
+    }
+
     [ClientDataFact]
     public async Task StormGustHitsHostilePlayersInTheChosenArea()
     {
