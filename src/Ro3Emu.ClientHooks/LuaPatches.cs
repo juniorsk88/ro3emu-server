@@ -128,6 +128,7 @@ namespace Ro3Emu.ClientHooks
                 if (param != null) param.Obf_luA<string, object>("StallsNameCharacterLimit", (long)StallNameMaxLength);
                 if (param != null) param.Obf_luA<string, object>("RechargeExternalUrl", StoreUrl());
                 _doneEnv = env;
+                HuntChoiceWindow.Install();
                 TradeWindow.Install(); // IMGUI trade / send / vault window; needs no Lua, and guards itself (once, kill switch)
                 HotbarKey.Install(); // F12 = next skill plan (hotbar); needs no Lua, and guards itself (once, kill switch)
                 PatchCountdowns(manager, global);

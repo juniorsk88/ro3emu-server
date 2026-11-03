@@ -44,7 +44,7 @@ namespace Ro3Emu.ClientHooks
             if (CustomNpcClient.Exists(rawget, npcs, Npc) && CustomNpcClient.Exists(rawget, interactions, Dialog)
                 && CustomNpcClient.Exists(rawget, interactions, Accept) && CustomNpcClient.Exists(rawget, interactions, Deliver)
                 && CustomNpcClient.Exists(rawget, dialogues, Dialog) && CustomNpcClient.Exists(rawget, tasks, FirstTask)
-                && CustomNpcClient.Exists(rawget, tasks, FirstTask + 98) && CustomNpcClient.Exists(rawget, tasks, EasierFirstTask + 98) && CustomNpcClient.Exists(rawget, texts, TextBase + 99)) return true;
+                && CustomNpcClient.Exists(rawget, tasks, FirstTask + 98) && CustomNpcClient.Exists(rawget, tasks, HuntOptions.TaskId(99, 0)) && CustomNpcClient.Exists(rawget, tasks, EasierFirstTask + 98) && CustomNpcClient.Exists(rawget, texts, TextBase + 99)) return true;
             var template = npcs.Obf_ruA<long, Obf_R.Obf_ff>(400034L);
             var interaction = interactions.Obf_ruA<long, Obf_R.Obf_ff>(40003401L);
             var taskTemplate = tasks.Obf_ruA<long, Obf_R.Obf_ff>(201000L);
@@ -64,7 +64,7 @@ namespace Ro3Emu.ClientHooks
                 var row = CustomNpcClient.Inherit(global, interaction);
                 PassChallenges.RawSet(row, "_iInterID", id);
                 PassChallenges.RawSet(row, "_iEXECAction", id == Dialog
-                    ? PassChallenges.List(PassChallenges.List("53", Dialog.ToString())) : PassChallenges.List(PassChallenges.List("")));
+                    ? PassChallenges.List(PassChallenges.List("211", Npc.ToString(), Dialog.ToString())) : PassChallenges.List(PassChallenges.List("")));
                 PassChallenges.RawSet(interactions, id, row);
             }
             var line = PassChallenges.Row(NpcShops.ToPairs(NpcServiceTable.LineFields(Dialog, Npc, TextBase + 100)));
@@ -74,11 +74,15 @@ namespace Ro3Emu.ClientHooks
             var close = PassChallenges.Row(NpcShops.ToPairs(NpcServiceTable.OptionFields(Dialog, Npc, 4, leave)));
             PassChallenges.RawSet(dialogues, Dialog, PassChallenges.List(line, accept, deliver, close));
             var waypoints = new Dictionary<(int, int), long>();
-            foreach (bool easier in new[] { false, true })
+            for (int kind = 0; kind < 2 + HuntOptions.Slots; kind++)
             for (int level = 1; level <= 99; level++)
             {
-                var (monster, map) = easier ? HuntTargets.ForLevel(level) : HuntTargets.LegacyForLevel(level);
-                long firstTask = easier ? EasierFirstTask : FirstTask;
+                var options = HuntOptions.ForLevel(level);
+                if (kind >= 2 && kind - 2 >= options.Length) continue;
+                var (monster, map) = kind >= 2 ? (options[kind - 2].Npc, options[kind - 2].Map)
+                    : kind == 1 ? HuntTargets.ForLevel(level) : HuntTargets.LegacyForLevel(level);
+                long taskId = kind >= 2 ? HuntOptions.TaskId(level, kind - 2)
+                    : (kind == 1 ? EasierFirstTask : FirstTask) + level - 1;
                 var monsterRow = npcs.Obf_ruA<long, Obf_R.Obf_ff>(monster);
                 var mapRow = maps.Obf_ruA<long, Obf_R.Obf_ff>(map);
                 var monsterName = Translate(trans, monsterRow?.Obf_RuA<Obf_R.Obf_ff>("_kName"));
@@ -90,12 +94,15 @@ namespace Ro3Emu.ClientHooks
                     if (waypoint <= 0) return false;
                     waypoints[(monster, map)] = waypoint;
                 }
-                long text = TextBase + level + (easier ? 400 : 0);
-                long targetText = TextBase + 200 + level + (easier ? 400 : 0);
+                long text = kind >= 2 ? TextBase + 1000 + (level - 1) * HuntOptions.Slots + kind - 2
+                    : TextBase + level + (kind == 1 ? 400 : 0);
+                long targetText = kind >= 2 ? TextBase + 2000 + (level - 1) * HuntOptions.Slots + kind - 2
+                    : TextBase + 200 + level + (kind == 1 ? 400 : 0);
+                if (kind >= 2) HuntChoiceWindow.Remember(monster, map, monsterName, mapName);
                 PassChallenges.Text(texts, text, "Caçada: " + monsterName);
                 PassChallenges.Text(texts, targetText, mapName + ": Derrote " + monsterName + "*");
                 var task = CustomNpcClient.Inherit(global, taskTemplate);
-                PassChallenges.RawSet(task, "_iTaskID", firstTask + level - 1);
+                PassChallenges.RawSet(task, "_iTaskID", taskId);
                 PassChallenges.RawSet(task, "_iName", PassChallenges.List(text));
                 PassChallenges.RawSet(task, "_iTaskDescribe", PassChallenges.List(text));
                 PassChallenges.RawSet(task, "_iTargetDescribe", PassChallenges.List(targetText));
@@ -119,7 +126,7 @@ namespace Ro3Emu.ClientHooks
                 PassChallenges.RawSet(task, "_kTrack", track);
                 PassChallenges.RawSet(task, "_kPCTrack", track);
                 PassChallenges.RawSet(task, "_kEXP", PassChallenges.List());
-                PassChallenges.RawSet(tasks, firstTask + level - 1, task);
+                PassChallenges.RawSet(tasks, taskId, task);
             }
             return true;
         }

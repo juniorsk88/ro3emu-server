@@ -95,6 +95,7 @@ namespace Ro3Emu.ClientHooks
         {
             Detach();
             Job50Client.Reset();
+            HuntChoiceWindow.Reset();
             while (_inbound.TryDequeue(out _)) { }
             while (_status.TryDequeue(out _)) { }
             _requestCallback = null;
@@ -143,6 +144,7 @@ namespace Ro3Emu.ClientHooks
 
         private void OnMessage(uint msgId, ReadOnlyMemory<byte> memory)
         {
+            if (msgId == HuntChoiceWindow.DownMsgId) { HuntChoiceWindow.OnDown(memory); return; }
             if (msgId == Job50Client.State) { Job50Client.OnState(memory); return; }
             if (msgId == Diagnostics.MsgId)
             {

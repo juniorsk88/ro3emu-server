@@ -53,6 +53,8 @@ public sealed partial class SkillCombatTests
                 session.Items.Add(new InvItem { Guid = 880101, Entry = 1430118, Stack = 1, Pack = 3,
                     Grid = CharacterService.CardGrid(1, 1), Attrs = new() { [502] = 3 } });
                 target.Hp = 1_000_000;
+                session.LastCombatMs = MonsterService.NowMs;
+                session.StatusBits |= 1L << 15; // Keep natural regeneration out of the card-healing assertion.
                 var hp = Math.Max(1, character.Stats(session)[101] / 2);
                 await character.SetHpSpAsync(session, hp, null);
                 return hp;

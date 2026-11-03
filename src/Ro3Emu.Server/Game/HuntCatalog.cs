@@ -8,5 +8,5 @@ internal static class HuntCatalog
     internal static (int Npc, int Map) ForLevel(int level) => HuntTargets.ForLevel(level);
 
     internal static bool IsHunt(long id) => id >= FirstTask && id < FirstTask + 99
-        || id >= EasierFirstTask && id < EasierFirstTask + 99;
+        || id >= EasierFirstTask && id < EasierFirstTask + 99 || HuntOptions.IsOption(id);
 }

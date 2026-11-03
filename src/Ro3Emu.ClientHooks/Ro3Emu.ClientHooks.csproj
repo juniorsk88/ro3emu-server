@@ -47,6 +47,7 @@
     <!-- English replacements for Chinese-text UI textures (TextureSwap), carried inside this DLL. -->
     <EmbeddedResource Include="Textures\*.png" LogicalName="textures/%(Filename)%(Extension)" />
     <Compile Include="..\Ro3Emu.Server\Game\HuntTargets.cs" Link="HuntTargets.cs" />
+    <Compile Include="..\Ro3Emu.Server\Game\HuntOptions.cs" Link="HuntOptions.cs" />
     <Compile Include="..\Ro3Emu.Server\Game\PetShopCatalog.cs" Link="PetShopCatalog.cs" />
     <Reference Include="UnityEngine.ImageConversionModule"><HintPath>$(ClientManaged)\UnityEngine.ImageConversionModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.TextRenderingModule"><HintPath>$(ClientManaged)\UnityEngine.TextRenderingModule.dll</HintPath><Private>false</Private></Reference>

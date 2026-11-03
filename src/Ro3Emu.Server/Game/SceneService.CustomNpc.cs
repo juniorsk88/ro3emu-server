@@ -36,9 +36,10 @@ public sealed partial class SceneService
     internal Func<GameSession, Task>? CustomNpcReady { get; set; }
     internal Func<GameSession, WorldNpc, int, Task>? CustomHuntAction { get; set; }
 
-    internal async Task CustomNpcHelloAsync(GameSession session, bool easierHunts = false)
+    internal async Task CustomNpcHelloAsync(GameSession session, bool easierHunts = false, bool choices = false)
     {
-        session.EasierHunts |= easierHunts;
+        session.EasierHunts |= easierHunts || choices;
+        session.HuntOptionsClient |= choices;
         if (session.CustomNpcRows) return;
         session.CustomNpcRows = true;
         if (session.Role == null) return;

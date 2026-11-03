@@ -385,7 +385,7 @@ public sealed partial class SceneService(IOptions<ServerOptions> options, World 
         }
         if (IsCustomHunter(npc!))
         {
-            if (req.InteractionId != CustomNpcSettings.HunterDialogue && CustomHuntAction != null)
+            if ((req.InteractionId != CustomNpcSettings.HunterDialogue || s.HuntOptionsClient) && CustomHuntAction != null)
                 await CustomHuntAction(s, npc!, req.InteractionId);
             return;
         }

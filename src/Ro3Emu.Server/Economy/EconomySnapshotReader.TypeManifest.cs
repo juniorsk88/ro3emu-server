@@ -72,7 +72,8 @@ public static partial class EconomySnapshotReader
     // casual_battle_obligation.payout is CasualBattleService.Payout: a frozen match result (rating delta, record,
     // numbers) and the DropPool ids its payment rolls. No goods: they are granted by the role's event/casual-battle
     // receipt that also writes the timed_battle state and marks the row delivered.
-    public const string ExpectedFormatManifestHash = "D5E7E8D429207929DD339BBB976CBDAEA16B4197AD5A969D76BFCE9CD3EC6E54";
+    // TaskRuntimeState.LastHuntNpc identifies the last target for rotation; it holds no asset or reward.
+    public const string ExpectedFormatManifestHash = "F3997E8157E3FDD32AF0797E964DD5D0B68CB58F6A01E13ADD39D4B3C9B63020";
     public static string FormatManifestHash => State.FormatManifestHash;
 
     private sealed partial class State

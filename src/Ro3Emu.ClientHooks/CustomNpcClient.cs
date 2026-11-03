@@ -23,10 +23,10 @@ namespace Ro3Emu.ClientHooks
             if (!Exists(rawget, npcs, Npc) || !Exists(rawget, interactions, Dialog)
                 || !Exists(rawget, interactions, Heal) || !Exists(rawget, dialogues, Dialog)
                 || !Exists(rawget, texts, Name)
-                || !Exists(rawget, tasks, 99011099)) return;
+                || !Exists(rawget, tasks, 99020589)) return;
             int period = ++_helloPeriod;
             if (period <= 3 || period % 4 == 0)
-                SingletonMonoBehaviour<NW_CBBNetworkManager>.Instance.Obf_jBd(77022, Encoding.UTF8.GetBytes("npc-v2"));
+                SingletonMonoBehaviour<NW_CBBNetworkManager>.Instance.Obf_jBd(77022, Encoding.UTF8.GetBytes("npc-v3"));
         }
 
         internal static void Inject(Obf_R.Obf_ff dbm, Obf_R.Obf_ff global)

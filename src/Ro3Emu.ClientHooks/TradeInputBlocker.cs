@@ -12,6 +12,8 @@ namespace Ro3Emu.ClientHooks
     /// </summary>
     internal sealed class TradeInputBlocker
     {
+        private readonly bool _respectTradeDisable;
+        internal TradeInputBlocker(bool respectTradeDisable = true) { _respectTradeDisable = respectTradeDisable; }
         private GameObject _root;
         private Canvas _canvas;
         private RectTransform _block;
@@ -23,7 +25,7 @@ namespace Ro3Emu.ClientHooks
             if (_failed) return;
             try
             {
-                if (!show || TradeWindow.Disabled)
+                if (!show || (_respectTradeDisable && TradeWindow.Disabled))
                 {
                     if (_root != null && _root.activeSelf) _root.SetActive(false);
                     return;

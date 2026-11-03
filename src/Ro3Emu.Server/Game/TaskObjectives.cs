@@ -653,4 +653,5 @@ public sealed class TaskRuntimeState
 {
     public HashSet<long> CompletedGuides { get; set; } = new();
     public bool InCutScene { get; set; }
+    public int LastHuntNpc { get; set; }
 }

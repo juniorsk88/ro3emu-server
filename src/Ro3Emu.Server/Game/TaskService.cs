@@ -19,6 +19,7 @@ namespace Ro3Emu.Server.Game;
 public sealed partial class TaskService
 {
     public const uint TaskInfoSync = 5027;
+    internal const uint HuntChoiceUp = 77025, HuntChoiceDown = 77026;
     public const uint TaskAccept = 31202, TaskGiveUp = 31203, TaskDelivery = 31205, TaskFollow = 31206;
     public const uint TaskReset = 31204, TaskRewardNotice = 31211, TaskNpcChat = 31212, TaskFinishPyd = 31213;
     public const uint TaskSelectQuestBranch = 31215, TaskLuckyTurn = 31217, TaskTrackTeleport = 30016;
@@ -124,6 +125,11 @@ public sealed partial class TaskService
         {
             foreach (var id in view.Infos.Keys.Where(HuntCatalog.IsHunt).ToArray()) view.Infos.Remove(id);
             foreach (var id in view.CompleteTaskNum.Keys.Where(HuntCatalog.IsHunt).ToArray()) view.CompleteTaskNum.Remove(id);
+        }
+        if (!session.HuntOptionsClient)
+        {
+            foreach (var id in view.Infos.Keys.Where(HuntOptions.IsOption).ToArray()) view.Infos.Remove(id);
+            foreach (var id in view.CompleteTaskNum.Keys.Where(HuntOptions.IsOption).ToArray()) view.CompleteTaskNum.Remove(id);
         }
         foreach (var extra in ExtraTasks)
             foreach (var info in extra(session)) view.Infos[info.TaskId] = info;
@@ -367,7 +373,7 @@ public sealed partial class TaskService
         int result = session.Tasks == null ? ErrorCodes.Unknown
             : !defs.TryGetValue(req.Id, out var def) ? ErrorCodes.TaskNoConfig
             : HuntCatalog.IsHunt(req.Id) && (!session.CustomNpcRows || !new CustomNpcSettings(options).Read().Hunter
-                || session.Progress == null || req.Id != HuntCatalog.FirstFor(session.EasierHunts) + Math.Clamp(session.Progress.Level, 1, 99) - 1
+                || session.Progress == null || !HuntOfferAllowed(session, req.Id)
                 || session.Tasks.Infos.Any(x => HuntCatalog.IsHunt(x.Key) && Active(session, x.Key))
                 || !CanUseHunter(session, req.NpcId))
                 ? ErrorCodes.TaskRequirements
@@ -683,7 +689,9 @@ public sealed partial class TaskService
             var plan = HuntCatalog.IsHunt(id)
                 ? new AwardPlan(0, 0, huntReward.Job > 0 ? [new AwardGrant(CharacterService.JobExpItem, checked((int)huntReward.Job))] : [])
                 : _awards.Resolve(session, def.Award, playBook);
-            var runtime = new TaskRuntimeState { CompletedGuides = session.TaskRuntime.CompletedGuides.ToHashSet(), InCutScene = session.InCutScene || cutScene };
+            var runtime = new TaskRuntimeState { CompletedGuides = session.TaskRuntime.CompletedGuides.ToHashSet(), InCutScene = session.InCutScene || cutScene,
+                LastHuntNpc = HuntCatalog.IsHunt(id) && def.Targets.FirstOrDefault() is { Length: >= 2 } huntTarget
+                    ? (int)huntTarget[1] : session.TaskRuntime.LastHuntNpc };
             string awardSource = $"task/{session.Role!.Id}/{id}/{next.CompleteTaskNum[id]}/" +
                 $"{session.Daily?.DailyEpoch ?? 0}/{session.Daily?.WeeklyEpoch ?? 0}";
             if (!await _character.ApplyAwardAsync(session, plan, huntReward.Base, costs, next.ToByteArray(),
@@ -739,7 +747,24 @@ public sealed partial class TaskService
     {
         if (session.Progress == null || session.Tasks == null) return;
         long current = HuntCatalog.FirstFor(session.EasierHunts) + Math.Clamp(session.Progress.Level, 1, 99) - 1;
-        if (action == CustomNpcSettings.HunterAccept)
+        if (session.HuntOptionsClient && action == CustomNpcSettings.HunterDialogue)
+        {
+            var completed = session.Tasks.Infos.Values.FirstOrDefault(i => HuntCatalog.IsHunt(i.TaskId) && i.Status == Finished);
+            string message = "Escolha sua próxima caçada.";
+            if (completed != null)
+            {
+                var request = new TaskDeliveryReq();
+                request.Req.Add(new TaskDeliverySingleReq { Id = completed.TaskId, NpcId = npc.Uid });
+                await DeliverAsync(session, request);
+                message = session.Tasks.Infos.TryGetValue(completed.TaskId, out var delivered) && delivered.Status == Delivered
+                    ? "Parabéns! Sua recompensa foi entregue. Escolha sua próxima caçada."
+                    : "Não foi possível entregar sua caçada. Tente novamente.";
+            }
+            else if (session.Tasks.Infos.Values.Any(i => HuntCatalog.IsHunt(i.TaskId) && i.Status == Running))
+                message = "Você já tem uma caçada em andamento.";
+            await SendHuntChoicesAsync(session, npc, message);
+        }
+        else if (action == CustomNpcSettings.HunterAccept)
             await AcceptAsync(session, new TaskAcceptReq { Id = current, NpcId = npc.Uid });
         else if (action == CustomNpcSettings.HunterDeliver)
         {
