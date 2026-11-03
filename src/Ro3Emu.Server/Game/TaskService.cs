@@ -581,7 +581,31 @@ public sealed partial class TaskService
                 }
                 if (info.Status != Finished)
                 {
-                    info.Status = Finished;
+                    if (HuntCatalog.IsHunt(info.TaskId) && session.Progress != null)
+                    {
+                        int percent = new CustomNpcSettings(options).Read().HuntFinishPercent;
+                        if (percent > 0)
+                        {
+                            var reward = _character.HuntReward(session.Progress, session.Job50Client, percent);
+                            var before = session.Tasks.ToByteArray();
+                            var after = session.Tasks.Clone();
+                            after.Infos[taskId].Status = Finished;
+                            var plan = new AwardPlan(0, 0, reward.Job > 0
+                                ? [new AwardGrant(CharacterService.JobExpItem, checked((int)reward.Job))] : []);
+                            long cycle = after.CompleteTaskNum.GetValueOrDefault(taskId) + 1;
+                            if (!await _character.ApplyAwardAsync(session, plan, reward.Base,
+                                deliveredTaskState: after.ToByteArray(), taskRuntimeState: JsonSerializer.SerializeToUtf8Bytes(session.TaskRuntime), expectedTasks: before,
+                                ownedAward: new CharacterService.OwnedAwardSource("cd13e/quest-award",
+                                    $"hunt-finish/{session.Role!.Id}/{taskId}/{cycle}", new { Task = taskId, Cycle = cycle, Percent = percent })))
+                            {
+                                debtIncomplete = true;
+                                storageFailed = true;
+                                break;
+                            }
+                        }
+                        else info.Status = Finished;
+                    }
+                    else info.Status = Finished;
                     moved = true;
                     if (def.Type == ChickenTaskType) chickenFinished.Add(def.Id);
                 }
@@ -655,7 +679,7 @@ public sealed partial class TaskService
             // 5021 is the authoritative season snapshot sent to this session, also used by client previews.
             int? playBook = session.Synced.GetValueOrDefault(SeasonService.SeasonSync) is DBSeasonInfo { Current: { } current }
                 ? (int)current.PlayBookId : null;
-            var huntReward = HuntCatalog.IsHunt(id) ? _character.HuntReward(session.Progress!, session.Job50Client) : (Base: def.Exp, Job: 0L);
+            var huntReward = HuntCatalog.IsHunt(id) ? _character.HuntReward(session.Progress!, session.Job50Client, new CustomNpcSettings(options).Read().HuntDeliverPercent) : (Base: def.Exp, Job: 0L);
             var plan = HuntCatalog.IsHunt(id)
                 ? new AwardPlan(0, 0, huntReward.Job > 0 ? [new AwardGrant(CharacterService.JobExpItem, checked((int)huntReward.Job))] : [])
                 : _awards.Resolve(session, def.Award, playBook);

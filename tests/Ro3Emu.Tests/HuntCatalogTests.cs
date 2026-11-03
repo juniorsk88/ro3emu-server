@@ -57,13 +57,17 @@ public sealed partial class MapTests
         var character = _app.Services.GetRequiredService<CharacterService>();
         var roles = _app.Services.GetRequiredService<RoleStore>();
         var tasks = _app.Services.GetRequiredService<TaskService>();
+        var data = _app.Services.GetRequiredService<GameData>();
+        long baseNeed = GameData.Int(data.Row("BaseLvConfig", 20)!.Value, "_iBaseExp");
+        long jobRank = GameData.Int(data.Row("JobConfig", 1100)!.Value, "_iJobRank");
+        long jobNeed = GameData.Int(data.Row("JobLvConfig", jobRank * 100 + 15)!.Value, "_iJobeExp");
         var combat = _app.Services.GetRequiredService<CombatService>();
         var monsters = _app.Services.GetRequiredService<MonsterService>();
         var onKill = combat.Killed.Single(h => h.Target is TaskService);
         await loop.InvokeAsync(() => _app.Services.GetRequiredService<SceneService>().CustomNpcHelloAsync(session, easier));
         var (targetNpc, targetMap) = easier ? HuntTargets.ForLevel(20) : HuntTargets.LegacyForLevel(20);
         var before = await loop.InvokeAsync(() => Task.FromResult((session.Progress!.Exp, session.Progress.JobExp,
-            character.HuntReward(session.Progress))));
+            character.HuntReward(session.Progress), character.HuntReward(session.Progress, percent: 20))));
         long taskId = HuntCatalog.FirstFor(easier) + 19;
         await alice.SendGameAsync(TaskService.TaskAccept, new TaskAcceptReq { Id = taskId, NpcId = 0 });
         var refused = await Next(alice, TaskService.ApiError, APIErrorMsg.Parser, e => e.OriginMsgId == TaskService.TaskAccept);
@@ -118,6 +122,8 @@ public sealed partial class MapTests
                 await Kill(targetNpc, 30);
                 Assert.Equal(30, session.Tasks.Infos[taskId].CompleteNum[0]);
                 Assert.Equal(TaskState.Finish, session.Tasks.Infos[taskId].Status);
+                Assert.Equal(before.Exp + before.Item3.Base * (count - 1) + before.Item4.Base * count, session.Progress!.Exp + (session.Progress.Level > 20 ? baseNeed : 0));
+                Assert.Equal(before.JobExp + before.Item3.Job * (count - 1) + before.Item4.Job * count, session.Progress.JobExp + (session.Progress.JobLevel > 15 ? jobNeed : 0));
                 Assert.Equal(30, DBTaskInfo.Parser.ParseFrom(roles.LoadTasks(session.Role!.Id)!).Infos[taskId].CompleteNum[0]);
             });
             await Gm("alice", "!warp 10100 169.5 202.5");
@@ -137,8 +143,8 @@ public sealed partial class MapTests
             {
                 Assert.Equal(count, session.Tasks!.CompleteTaskNum[taskId]);
                 Assert.Equal(count, DBTaskInfo.Parser.ParseFrom(roles.LoadTasks(session.Role!.Id)!).CompleteTaskNum[taskId]);
-                Assert.Equal(before.Exp + before.Item3.Base * count, session.Progress!.Exp);
-                Assert.Equal(before.JobExp + before.Item3.Job * count, session.Progress.JobExp);
+                Assert.Equal(before.Exp + (before.Item3.Base + before.Item4.Base) * count, session.Progress!.Exp + (session.Progress.Level > 20 ? baseNeed : 0));
+                Assert.Equal(before.JobExp + (before.Item3.Job + before.Item4.Job) * count, session.Progress.JobExp + (session.Progress.JobLevel > 15 ? jobNeed : 0));
                 return Task.CompletedTask;
             });
         }
@@ -148,7 +154,7 @@ public sealed partial class MapTests
         await loop.InvokeAsync(() =>
         {
             Assert.Equal(2, session.Tasks!.CompleteTaskNum[taskId]);
-            Assert.Equal(before.Exp + before.Item3.Base * 2, session.Progress!.Exp);
+            Assert.Equal(before.Exp + (before.Item3.Base + before.Item4.Base) * 2, session.Progress!.Exp + (session.Progress.Level > 20 ? baseNeed : 0));
             return Task.CompletedTask;
         });
     }

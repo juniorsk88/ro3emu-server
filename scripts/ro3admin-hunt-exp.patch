@@ -1,0 +1,36 @@
+--- a/tuning_api.py
++++ b/tuning_api.py
+@@ -919 +919 @@
+-CUSTOM_DEFAULT = {"healer": True, "hunter": True, "buffLevel": 10, "job50": False}
++CUSTOM_DEFAULT = {"healer": True, "hunter": True, "buffLevel": 10, "job50": False, "huntFinishPercent": 20, "huntDeliverPercent": 30}
+@@ -927 +927,3 @@
+-    ) and type(raw["buffLevel"]) is int and raw["buffLevel"] in (5, 10)
++    ) and type(raw["buffLevel"]) is int and raw["buffLevel"] in (5, 10) and all(
++        type(raw[k]) is int and 0 <= raw[k] <= 1000 for k in ("huntFinishPercent", "huntDeliverPercent")
++    )
+@@ -936,0 +939,2 @@
++    if isinstance(settings, dict) and {"healer", "hunter", "buffLevel", "job50"} <= set(settings) <= set(CUSTOM_DEFAULT):
++        settings = {**CUSTOM_DEFAULT, **settings}
+@@ -941,0 +946,5 @@
++    if isinstance(body, dict) and {"healer", "hunter", "buffLevel", "job50"} <= set(body) <= set(CUSTOM_DEFAULT):
++        status, current = custom_npcs_get()
++        if status != 200:
++            return status, current
++        body = {**current["settings"], **body}
+@@ -943 +952 @@
+-        return 400, {"error": "Informe todos os controles e escolha buffs de nível 5 ou 10."}
++        return 400, {"error": "Informe os controles válidos, buffs de nível 5 ou 10 e percentuais inteiros entre 0 e 1000."}
+--- a/assets/ajustes.js
++++ b/assets/ajustes.js
+@@ -190,0 +191,2 @@
++    <div class="ai-field"><label for="cn-huntFinishPercent">EXP ao concluir as mortes (%)<small>Aplica-se à EXP de base e de classe necessária para o próximo nível em cada etapa.</small></label><input id="cn-huntFinishPercent" data-cn="huntFinishPercent" type="number" min="0" max="1000" step="1" required value="${d.huntFinishPercent}"></div>
++    <div class="ai-field"><label for="cn-huntDeliverPercent">EXP ao entregar ao Caçador (%)</label><input id="cn-huntDeliverPercent" data-cn="huntDeliverPercent" type="number" min="0" max="1000" step="1" required value="${d.huntDeliverPercent}"></div>
+@@ -205 +207 @@
+-  CUSTOM_NPCS.draft[el.dataset.cn] = el.dataset.cn === 'buffLevel' ? Number(el.value) : el.value === 'true';
++  CUSTOM_NPCS.draft[el.dataset.cn] = ['buffLevel', 'huntFinishPercent', 'huntDeliverPercent'].includes(el.dataset.cn) ? Number(el.value) : el.value === 'true';
+@@ -211,0 +214,2 @@
++  const invalid = [...$('customNpcRoot').querySelectorAll('input')].find(el => !el.checkValidity());
++  if (invalid) { invalid.reportValidity(); return; }
+@@ -213 +217 @@
+-  const controls = [...$('customNpcRoot').querySelectorAll('select')]; controls.forEach(el => el.disabled = true);
++  const controls = [...$('customNpcRoot').querySelectorAll('select, input')]; controls.forEach(el => el.disabled = true);

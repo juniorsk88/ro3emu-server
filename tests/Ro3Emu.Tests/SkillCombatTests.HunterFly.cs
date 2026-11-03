@@ -38,6 +38,7 @@ public sealed partial class SkillCombatTests
     {
         await using var alice = await InWorld("Alice");
         await MageAsync("alice");
+        await Teach("alice", 12004);
         var session = Session("alice");
         var target = await Target("alice", stationary: true);
         var character = _app.Services.GetRequiredService<CharacterService>();
@@ -51,7 +52,6 @@ public sealed partial class SkillCombatTests
             {
                 session.Items.Add(new InvItem { Guid = 880101, Entry = 1430118, Stack = 1, Pack = 3,
                     Grid = CharacterService.CardGrid(1, 1), Attrs = new() { [502] = 3 } });
-                session.Progress!.Skills[12004] = 1;
                 target.Hp = 1_000_000;
                 var hp = Math.Max(1, character.Stats(session)[101] / 2);
                 await character.SetHpSpAsync(session, hp, null);

@@ -33,9 +33,9 @@ public sealed partial class CharacterService
         ? Job50Curve.ExpNeed(OriginalJobExpNeed(career, 39), OriginalJobExpNeed(career, 40), jobLevel)
         : OriginalJobExpNeed(career, jobLevel);
 
-    internal (long Base, long Job) HuntReward(RoleProgress progress, bool clientReady = false) =>
-        (checked(BaseExpNeed(progress.Level) * 3 / 10), progress.JobLevel >= MaxJobLevel(progress.Career, clientReady)
-            ? 0 : checked(JobExpNeed(progress.Career, progress.JobLevel) * 3 / 10));
+    internal (long Base, long Job) HuntReward(RoleProgress progress, bool clientReady = false, int percent = 30) =>
+        (checked(BaseExpNeed(progress.Level) * percent / 100), progress.JobLevel >= MaxJobLevel(progress.Career, clientReady)
+            ? 0 : checked(JobExpNeed(progress.Career, progress.JobLevel) * percent / 100));
 
     /// <summary>All stat points a role has earned: the starting 48, BaseLvConfig._iStatusPoint per level reached, GM extras.</summary>
     public int TotalPoints(RoleProgress p) =>
