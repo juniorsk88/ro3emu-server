@@ -364,7 +364,7 @@ public sealed partial class SceneService(IOptions<ServerOptions> options, World 
             : req.Pos != null && !WorldCoreService.Finite(req.Pos) ? ErrorCodes.NpcParameter
             : !Near(s, npc) ? ErrorCodes.NpcTooFar
             : IsCustomHealer(npc) ? req.InteractionId is not (CustomNpcSettings.HealerDialogue or CustomNpcSettings.HealerInteraction) ? ErrorCodes.NpcParameter : 0
-            : IsCustomHunter(npc) ? req.InteractionId is not (CustomNpcSettings.HunterDialogue or CustomNpcSettings.HunterAccept or CustomNpcSettings.HunterDeliver) ? ErrorCodes.NpcParameter : 0
+            : IsCustomHunter(npc) ? req.InteractionId is not (CustomNpcSettings.HunterDialogue or CustomNpcSettings.HunterAccept or CustomNpcSettings.HunterDeliver or CustomNpcSettings.HunterChoiceFirst or CustomNpcSettings.HunterChoiceSecond) ? ErrorCodes.NpcParameter : 0
             : data.Row("NPCConfig", npc.NpcId) is not { } npcRow
                 || !HasInteraction(npcRow, req.InteractionId, npc.Kind) ? ErrorCodes.NpcParameter
             : req.InteractionId == InteractKafraTeleport && !worldData.IsKafraDestination(req.TargetSceneEntry) ? ErrorCodes.NpcParameter : 0;

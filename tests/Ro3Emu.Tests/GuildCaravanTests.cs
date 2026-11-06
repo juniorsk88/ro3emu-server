@@ -983,6 +983,13 @@ public sealed class GuildCaravanTests : IAsyncLifetime
             await Show(alice);
             long bobId = (long)bob.Self!.Uuid;
             var recipient = Session(bob);
+            var deliveryEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var caravan = _app.Services.GetRequiredService<GuildCaravanService>();
+            caravan.BeforeCharacterAdmissionForTest = origin =>
+            {
+                if (origin == "guild-caravan/recipient-delivery") deliveryEntered.TrySetResult();
+                return Task.CompletedTask;
+            };
             await recipient.StateLock.WaitAsync();
             Task? help = null;
             try
@@ -997,9 +1004,14 @@ public sealed class GuildCaravanTests : IAsyncLifetime
                             { PlayerID = bobId, SkuIndex = request.Index, DayVersion = show.DayVersion }));
                     return Task.CompletedTask;
                 });
-                var deadline = DateTime.UtcNow + Wait;
-                while (DateTime.UtcNow < deadline && PendingCount(bobId) == 0 && !help!.IsCompleted) await Task.Delay(20);
-                if (help!.IsCompleted) await help;
+                var ready = await Task.WhenAny(deliveryEntered.Task, help!, Task.Delay(Wait));
+                if (ready == help)
+                {
+                    await help!;
+                    var response = await Next(alice, GuildCaravanService.HelpOther, GuildCatShopItemHelpOtherResp.Parser);
+                    Assert.Fail($"Help ended before recipient delivery, result {response.Result}");
+                }
+                Assert.True(ready == deliveryEntered.Task, $"Recipient delivery not reached; help status {help!.Status}");
                 Assert.Equal(1, PendingCount(bobId));
                 Assert.False(help!.IsCompleted);
                 var attachment = recipient.Attachment;
@@ -1011,7 +1023,7 @@ public sealed class GuildCaravanTests : IAsyncLifetime
                 for (int i = 0; i < 250 && attachment is { Cancelled: false }; i++) await Task.Delay(20);
                 Assert.True(attachment is null or { Cancelled: true }, "the server never noticed Bob's disconnect");
             }
-            finally { recipient.StateLock.Release(); }
+            finally { caravan.BeforeCharacterAdmissionForTest = null; recipient.StateLock.Release(); }
             await help!.WaitAsync(Wait);
             Assert.Equal(0, (await Next(alice, GuildCaravanService.HelpOther, GuildCatShopItemHelpOtherResp.Parser)).Result);
             var pending = Pending(bobId);

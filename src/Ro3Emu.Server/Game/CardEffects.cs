@@ -238,7 +238,10 @@ public sealed class CardEffects
         long heal = Math.Min((long)desc[2], (long)Math.Floor(damage * desc[1] / 100));
         if (heal <= 0) return;
         var stats = _character.Stats(session);
-        await _character.SetHpSpAsync(session, stats[2000] + heal, null);
+        long actual = Math.Min(heal, Math.Max(0, stats[101] - stats[2000]));
+        if (actual <= 0) return;
+        await _character.SetHpSpAsync(session, stats[2000] + actual, null);
+        await combat.ShowCardHealAsync(session, actual);
     }
 
     private async Task OnAdditionalPlayerDamageAsync(GameSession session, long damage)

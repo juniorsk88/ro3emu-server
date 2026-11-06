@@ -682,9 +682,13 @@ public sealed class CardRulesTests : IAsyncLifetime
             Assert.True(Math.Abs(session.Position.X - start.X) + Math.Abs(session.Position.Z - start.Z) > 0.1f);
             session.Items.Add(new InvItem { Guid = 881100, Entry = 1460500, Stack = 1, Pack = 3, Grid = CharacterService.CardGrid(1, 1) });
             await effects.RefreshAsync(session);
+            Assert.True((session.ForbiddenBits & 512UL) != 0); // SpecialStatusConfig 22 forbids the client's hit reaction.
             var protectedPosition = session.Position.Clone();
             await combat.KnockPlayerAsync(session, protectedPosition.X - direction.Item1, protectedPosition.Z - direction.Item2, 1, 1000001, 0, 100);
             Assert.Equal(protectedPosition, session.Position);
+            session.Items.RemoveAll(i => i.Guid == 881100);
+            await effects.RefreshAsync(session);
+            Assert.Equal(0UL, session.ForbiddenBits & 512UL);
         });
     }
 

@@ -232,6 +232,7 @@ public sealed class GameSession(PhonestChannel channel, TrafficLog traffic)
     internal bool CustomNpcRows { get; set; }
     internal bool EasierHunts { get; set; }
     internal bool HuntOptionsClient { get; set; }
+    internal long[] HuntPresentedTasks { get; set; } = [];
     internal bool Job50Client { get; set; }
     public PronteraDefenseService.State? Defense { get; set; }
     public TimedBattleService.State? TimedBattle { get; set; }

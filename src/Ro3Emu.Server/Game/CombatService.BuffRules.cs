@@ -212,6 +212,13 @@ public sealed partial class CombatService
         }
     }
 
+    internal Task ShowCardHealAsync(GameSession player, long amount) =>
+        ToPlayerAndViewersAsync(player, SkillHit, new SkillHitInfo
+        {
+            SrcID = player.Role!.Id, SessionId = ++_sessionIds,
+            Dsts = { new DamageInfo { DstID = player.Role.Id, Damage = amount, DamageType = DamageType.Heal, DstElement = 1 } },
+        });
+
     /// <summary>A heal tick (Breath Medicine, Tension Relax): HP up to the maximum and a heal number on 31101.</summary>
     private async Task PeriodicHealAsync(GameSession p, BuffService.PeriodicEffect effect, ActiveBuff buff)
     {

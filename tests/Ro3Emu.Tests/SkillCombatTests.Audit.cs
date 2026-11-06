@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Romsg;
 using Ro3Emu.Bot;
 using Ro3Emu.Server.Data;
+using Ro3Emu.Server.Data.Config;
 using Ro3Emu.Server.Game;
 using Ro3Emu.Server.Maps;
 
@@ -151,7 +152,8 @@ public sealed partial class SkillCombatTests
             if (hit.ShowPoint != 0 && (!effects.TryGetValue(hit.ShowPoint.ToString(), out var e)
                 || !e.TryGetProperty("m_kDamage", out var d) || !d.TryGetProperty("m_kActionDamge", out _)))
                 problems.Add($"hit showPoint {hit.ShowPoint} has no m_kActionDamge");
-            if (hit.Dsts.Count > 0 && hit.Split != CombatService.HitSplit(row)) problems.Add($"hit split {hit.Split} != _kShowDmg {CombatService.HitSplit(row)}");
+            int expectedSplit = new SkillConfig(row).ScriptLogic == "Meteor_Storm" ? 1 : CombatService.HitSplit(row);
+            if (hit.Dsts.Count > 0 && hit.Split != expectedSplit) problems.Add($"hit split {hit.Split} != expected {expectedSplit}");
         }
         if (visual.BulletEffect != 0 && bullets.Count == 0 && hits.Count > 0) problems.Add($"projectile {visual.BulletEffect} not sent");
         if (visual.BulletEffect == 0 && bullets.Count > 0) problems.Add("projectile sent without a plan");

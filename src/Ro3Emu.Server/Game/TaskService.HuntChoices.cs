@@ -30,6 +30,7 @@ public sealed partial class TaskService
             task = HuntOptions.TaskId(session.Progress.Level, slot), npc = targets[slot].Npc,
             map = targets[slot].Map, element = targets[slot].Element
         }).ToArray();
+        session.HuntPresentedTasks = choices.Select(choice => choice.task).ToArray();
         if (active && string.IsNullOrEmpty(message)) message = "Você já tem uma caçada em andamento.";
         await session.SendGameRawAsync(HuntChoiceDown, JsonSerializer.SerializeToUtf8Bytes(new
         { npcUid = npc.Uid, message, choices }));

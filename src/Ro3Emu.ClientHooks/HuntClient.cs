@@ -19,6 +19,7 @@ namespace Ro3Emu.ClientHooks
             var texts = global.Obf_RuA<Obf_R.Obf_ff>("LanguageKV");
             var trans = global.Obf_RuA<Obf_R.Obf_ff>("Language")?.Obf_RuA<Obf_R.Obf_Ef>("Trans");
             if (npcs == null || interactions == null || dialogues == null || tasks == null || maps == null || texts == null || trans == null) return false;
+            HuntChoiceWindow.Configure(dbm, global);
             var prontera = maps.Obf_ruA<long, Obf_R.Obf_ff>(10100L);
             var sceneName = prontera?.Obf_RuA<string>("_kResSceneEditorName");
             if (string.IsNullOrEmpty(sceneName)) return false;
@@ -43,6 +44,7 @@ namespace Ro3Emu.ClientHooks
             }
             if (CustomNpcClient.Exists(rawget, npcs, Npc) && CustomNpcClient.Exists(rawget, interactions, Dialog)
                 && CustomNpcClient.Exists(rawget, interactions, Accept) && CustomNpcClient.Exists(rawget, interactions, Deliver)
+                && CustomNpcClient.Exists(rawget, interactions, 99003404L) && CustomNpcClient.Exists(rawget, interactions, 99003405L)
                 && CustomNpcClient.Exists(rawget, dialogues, Dialog) && CustomNpcClient.Exists(rawget, tasks, FirstTask)
                 && CustomNpcClient.Exists(rawget, tasks, FirstTask + 98) && CustomNpcClient.Exists(rawget, tasks, HuntOptions.TaskId(99, 0)) && CustomNpcClient.Exists(rawget, tasks, EasierFirstTask + 98) && CustomNpcClient.Exists(rawget, texts, TextBase + 99)) return true;
             var template = npcs.Obf_ruA<long, Obf_R.Obf_ff>(400034L);
@@ -59,7 +61,7 @@ namespace Ro3Emu.ClientHooks
             PassChallenges.RawSet(npc, "_kName", PassChallenges.List(TextBase));
             PassChallenges.RawSet(npc, "_iInteractID", PassChallenges.List(Dialog));
             PassChallenges.RawSet(npcs, Npc, npc);
-            foreach (long id in new[] { Dialog, Accept, Deliver })
+            foreach (long id in new[] { Dialog, Accept, Deliver, 99003404L, 99003405L })
             {
                 var row = CustomNpcClient.Inherit(global, interaction);
                 PassChallenges.RawSet(row, "_iInterID", id);

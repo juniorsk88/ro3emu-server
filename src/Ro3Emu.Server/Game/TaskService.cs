@@ -764,6 +764,14 @@ public sealed partial class TaskService
                 message = "Você já tem uma caçada em andamento.";
             await SendHuntChoicesAsync(session, npc, message);
         }
+        else if (session.HuntOptionsClient && action is CustomNpcSettings.HunterChoiceFirst or CustomNpcSettings.HunterChoiceSecond)
+        {
+            int index = action - CustomNpcSettings.HunterChoiceFirst;
+            long[] offered = session.HuntPresentedTasks;
+            session.HuntPresentedTasks = [];
+            if (index < offered.Length)
+                await AcceptAsync(session, new TaskAcceptReq { Id = offered[index], NpcId = npc.Uid });
+        }
         else if (action == CustomNpcSettings.HunterAccept)
             await AcceptAsync(session, new TaskAcceptReq { Id = current, NpcId = npc.Uid });
         else if (action == CustomNpcSettings.HunterDeliver)

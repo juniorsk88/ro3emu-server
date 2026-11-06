@@ -124,8 +124,14 @@ public sealed class TowerPlayerLifecycleTests : IAsyncLifetime
         var floor = await EnterFloor(bot, 1);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Vec3 monsterPosition = null!;
         await OnLoop(async () =>
         {
+            var monster = Service<World>().AllUnits().OfType<MonsterUnit>().Single(m => m.Uid == (long)floor.Monsters[0].Uuid);
+            monster.Moving = false;
+            monster.SlowMovementBp = 10000;
+            monster.SlowMovementExpireMs = long.MaxValue;
+            monsterPosition = monster.Pos;
             var totem = new InvItem
             {
                 Guid = 990001, Entry = 17300001, Stack = 1, Pack = 4,
@@ -143,7 +149,7 @@ public sealed class TowerPlayerLifecycleTests : IAsyncLifetime
                 await release.Task;
             });
         });
-        await bot.SendGameAsync(MsgId.Walk, new WalkReq { Pos = floor.Monsters[0].MovementInfo.Pos, BStop = true, SpeedRate = 1 });
+        await bot.SendGameAsync(MsgId.Walk, new WalkReq { Pos = monsterPosition, BStop = true, SpeedRate = 1 });
         try
         {
             await Next(bot, CombatService.SkillHit, SkillHitInfo.Parser,

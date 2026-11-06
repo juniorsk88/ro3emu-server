@@ -8,7 +8,8 @@ internal sealed class CustomNpcSettings(IOptions<ServerOptions> options)
 {
     internal const int HealerNpc = 990031, HunterNpc = 990034;
     internal const int HealerTemplate = 400031, HunterTemplate = 400034, HealerDialogue = 99003101, HealerInteraction = 99003102;
-    internal const int HunterDialogue = 99003401, HunterAccept = 99003402, HunterDeliver = 99003403;
+    internal const int HunterDialogue = 99003401, HunterAccept = 99003402, HunterDeliver = 99003403,
+        HunterChoiceFirst = 99003404, HunterChoiceSecond = 99003405;
     internal const long Prontera = 10100;
     internal sealed record Snapshot(bool Healer, bool Hunter, int BuffLevel, bool Job50, int HuntFinishPercent, int HuntDeliverPercent);
 

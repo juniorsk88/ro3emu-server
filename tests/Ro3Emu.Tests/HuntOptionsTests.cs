@@ -11,6 +11,36 @@ namespace Ro3Emu.Tests;
 public sealed partial class MapTests
 {
     [ClientDataFact]
+    public async Task HunterNativeChoiceAcceptsOnlyAnOfferedTask()
+    {
+        await using var alice = await InWorld("Alice");
+        await Next(alice, GameAoiSink.SyncAoiView, AoIViewChangeData.Parser);
+        await Gm("alice", "!lvl 65 15");
+        await Gm("alice", "!warp 10100 169.5 202.5");
+        await FollowSceneChange(alice);
+        await alice.SendGameBytesAsync(SceneService.CustomNpcHello, Encoding.UTF8.GetBytes("npc-v3"));
+        var view = await Next(alice, GameAoiSink.SyncAoiView, AoIViewChangeData.Parser,
+            v => v.Bases.Any(n => n.EntityTemplateID == CustomNpcSettings.HunterNpc));
+        var hunter = Assert.Single(view.Bases, n => n.EntityTemplateID == CustomNpcSettings.HunterNpc);
+        async Task Interact(int id)
+        {
+            await alice.SendGameAsync(SceneService.NpcInteraction, new NpcInteractionReq
+                { NpcUid = (long)hunter.Uuid, InteractionId = id, SceneConfigId = Prontera });
+            Assert.Equal(0, (await Next(alice, SceneService.NpcInteraction, NpcInteractionRsp.Parser)).Result);
+        }
+        var session = _app.Services.GetRequiredService<SessionRegistry>().All().Single(s => s.Role?.Id == (long)alice.Self!.Uuid);
+        await Interact(CustomNpcSettings.HunterChoiceFirst);
+        Assert.Empty(session.HuntPresentedTasks);
+        await Interact(CustomNpcSettings.HunterDialogue);
+        var packet = await alice.Inbox.WaitAsync(e => e.IsGame(TaskService.HuntChoiceDown), TimeSpan.FromSeconds(15));
+        using var doc = JsonDocument.Parse(packet.Body);
+        long chosen = doc.RootElement.GetProperty("choices")[1].GetProperty("task").GetInt64();
+        await Interact(CustomNpcSettings.HunterChoiceSecond);
+        Assert.Equal(chosen, (await Next(alice, TaskService.TaskAccept, TaskAcceptResp.Parser)).Id);
+        Assert.Empty(session.HuntPresentedTasks);
+    }
+
+    [ClientDataFact]
     public void HuntOptionsUseRealLowerLevelMonstersAndRotateWithoutRepeating()
     {
         var data = _app.Services.GetRequiredService<GameData>();
@@ -28,6 +58,14 @@ public sealed partial class MapTests
                 Assert.Contains(world.Map(option.Map)!.SpawnGroups, g => g.Points.Count > 0 && (g.Pool
                     ? g.Limits.Any(l => l.NpcId == option.Npc && l.Max > 0)
                     : g.Points.Any(p => p.ConfigId == option.Npc)));
+                int frequentSpawns = world.Map(option.Map)!.SpawnGroups.Where(g => g.RespawnSeconds <= 60).Sum(g =>
+                {
+                    if (g.Pool) return Math.Min(g.Points.Count, g.Limits.Where(l => l.NpcId == option.Npc).Sum(l => l.Min));
+                    int alive = Math.Min(Math.Max(1, g.Total), g.Points.Count);
+                    return Math.Max(0, alive - g.Points.Count(p => p.ConfigId != option.Npc));
+                });
+                Assert.True(frequentSpawns >= 3, $"Level {level}: {option.Npc} on {option.Map} has {frequentSpawns} frequent spawns");
+                Assert.InRange(GameData.Int(npc, "_iBodyRemainTime"), 0, 60000);
                 var row = data.Row("TaskConfig", HuntOptions.TaskId(level, slot))!.Value;
                 Assert.Equal(option.Npc, row.GetProperty("_kProgressTarget")[0][1].GetInt32());
             }
@@ -36,6 +74,7 @@ public sealed partial class MapTests
             {
                 int[] chosen = HuntOptions.Choose(level, cycle, previous);
                 Assert.InRange(chosen.Length, 1, 2);
+                Assert.DoesNotContain(chosen, i => pool[i].Npc == 5000137);
                 if (level >= 5) Assert.Equal(2, chosen.Length);
                 if (pool.Any(x => x.Npc != previous)) Assert.DoesNotContain(chosen, i => pool[i].Npc == previous);
                 if (chosen.Length == 2)

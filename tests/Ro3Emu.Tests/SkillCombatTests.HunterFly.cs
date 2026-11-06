@@ -29,6 +29,9 @@ public sealed partial class SkillCombatTests
                 await _app.Services.GetRequiredService<CombatService>().HitMonsterAsync(session, target, 1000, 0);
                 Assert.Equal(101, character.Stats(session)[2000]);
             });
+            var heal = await Next(alice, CombatService.SkillHit, SkillHitInfo.Parser,
+                h => h.Dsts.Any(d => d.DstID == session.Role!.Id && d.DamageType == DamageType.Heal));
+            Assert.Equal(100, Assert.Single(heal.Dsts).Damage);
         }
         finally { cards.Roll = bound => Random.Shared.Next(bound); }
     }

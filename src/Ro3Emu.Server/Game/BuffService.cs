@@ -177,9 +177,11 @@ public sealed partial class BuffService : IGameTicker
             || p.Buffs.Any(b => b.IsPassive && b.IsTotemOwned == totemOwned && b.ConfigId == configId && b.SourceId == sourceId)) return;
         var buff = new ActiveBuff(++_guids, configId, long.MaxValue, 0,
             GameData.Pairs(row, "_kChangeAttri").Where(c => c.Value != 0).ToArray(), sourceId, IsPassive: true, IsTotemOwned: totemOwned,
+            StateOrdinal: new Data.Config.BuffConfig(row).BuffId == 20523 ? 22 : 0,
             ShowIcon: GameData.Int(row, "_iShowIcon") != 0);
         p.Buffs.Add(buff);
         TrackHalo(p, buff);
+        if (buff.StateOrdinal != 0) await RefreshControlAsync(p);
         // SceneService resends visible passives after ENTITYSELF when the client has created the unit.
         if (!p.SceneLoading && GameData.Int(row, "_iShowIcon") != 0)
             await ToPlayerAndViewersAsync(p, BuffUpdate, new BuffUpdateNotify
