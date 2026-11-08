@@ -65,8 +65,7 @@ namespace Ro3Emu.ClientHooks
             {
                 var row = CustomNpcClient.Inherit(global, interaction);
                 PassChallenges.RawSet(row, "_iInterID", id);
-                PassChallenges.RawSet(row, "_iEXECAction", id == Dialog
-                    ? PassChallenges.List(PassChallenges.List("211", Npc.ToString(), Dialog.ToString())) : PassChallenges.List(PassChallenges.List("")));
+                PassChallenges.RawSet(row, "_iEXECAction", PassChallenges.List(PassChallenges.List("")));
                 PassChallenges.RawSet(interactions, id, row);
             }
             var line = PassChallenges.Row(NpcShops.ToPairs(NpcServiceTable.LineFields(Dialog, Npc, TextBase + 100)));
