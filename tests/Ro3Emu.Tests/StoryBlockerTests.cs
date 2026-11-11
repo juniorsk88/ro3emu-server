@@ -177,6 +177,37 @@ public sealed class StoryBlockerTests : IAsyncLifetime
         Assert.False(await Read(s => s.Tasks!.Infos[706990].IsChapterLocked));
     }
 
+    [ClientDataFact]
+    public async Task ThirdClassRootStartsAtItsConfiguredLevelAndCompletesThroughTheOriginalMentor()
+    {
+        await using var bot = await InWorld();
+        var loop = Service<GameLoop>();
+        var character = Service<CharacterService>();
+        var tasks = Service<TaskService>();
+        var session = Service<SessionRegistry>().All().Single(s => s.Role != null);
+        await loop.InvokeAsync(() => character.SetJobAsync(session, 2300));
+        await loop.InvokeAsync(() => character.SetLevelAsync(session, 49, 40));
+        await loop.InvokeAsync(() => tasks.RefreshAsync(session));
+        Assert.False(await Read(s => s.Tasks!.Infos.ContainsKey(19991050)));
+
+        await loop.InvokeAsync(() => character.SetLevelAsync(session, 50, 40));
+        await loop.InvokeAsync(() => tasks.RefreshAsync(session));
+        Assert.Equal(TaskState.Running, await Read(s => s.Tasks!.Infos[19991050].Status));
+        var mentor = Service<WorldData>().Map(10100)!.Npcs.Single(n => n.NpcId == 200014);
+        await WarpAsync(bot, Gm, 10100, mentor.X, mentor.Z);
+        await loop.InvokeAsync(() => tasks.OnDialogAsync(session,
+            new ClientNpcInteractReq { NpcUid = mentor.Uid, DialogID = 1999105001 }));
+        Assert.True(await Read(s => TaskService.IsDelivered(s, 19991050)));
+        Assert.Equal(TaskState.Running, await Read(s => s.Tasks!.Infos[19991060].Status));
+
+        await loop.InvokeAsync(() => character.TransformJobAsync(session, new PlayerTransformJobReq { JobId = 2400 }));
+        await loop.InvokeAsync(() => tasks.RefreshAsync(session));
+        Assert.Equal(2400, await Read(s => s.Progress!.Career));
+        Assert.True(await Read(s => TaskService.IsDelivered(s, 19991060)));
+        await loop.InvokeAsync(() => tasks.RefreshAsync(session));
+        Assert.True(await Read(s => TaskService.IsDelivered(s, 19991050)));
+    }
+
     private static string RepoRoot()
     {
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null; dir = dir.Parent)

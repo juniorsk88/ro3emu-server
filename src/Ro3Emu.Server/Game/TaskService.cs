@@ -789,6 +789,14 @@ public sealed partial class TaskService
     {
         int accepted = 0;
         var defs = Defs();
+        // The original third-class quest is an automatic main-story root without a predecessor.
+        const long thirdClassRoot = 19991050;
+        if (defs.TryGetValue(thirdClassRoot, out var root) && root.Type == 1 && root.Accept == ReceiveAuto
+            && root.Pre.Length == 0 && !Active(session, root.Id) && !IsDelivered(session, root.Id) && Ready(session, root))
+        {
+            Accept(session, root.Id);
+            accepted++;
+        }
         foreach (var delivered in session.Tasks!.CompleteTaskNum.Where(kv => kv.Value > 0).Select(kv => kv.Key).ToList())
         {
             foreach (var child in _children!.GetValueOrDefault(delivered) ?? [])
