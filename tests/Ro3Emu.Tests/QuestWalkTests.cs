@@ -97,6 +97,15 @@ public sealed class QuestWalkTests : IAsyncLifetime
             var (running, delivered, scene, career) = await State();
             if (delivered.Contains(LastChapterOneTask)) break;
             var main = running.Where(id => GameData(id, "_iTaskType") == 1).OrderBy(id => id).ToList();
+            // Delivery becomes visible before its automatic successor has necessarily been accepted.
+            for (int retry = 0; main.Count == 0 && retry < 40; retry++)
+            {
+                await Task.Delay(50);
+                (running, delivered, scene, career) = await State();
+                if (delivered.Contains(LastChapterOneTask)) break;
+                main = running.Where(id => GameData(id, "_iTaskType") == 1).OrderBy(id => id).ToList();
+            }
+            if (delivered.Contains(LastChapterOneTask)) break;
             Assert.True(main.Count > 0, $"no main task running after: {string.Join(" / ", log.TakeLast(5))}");
             long task = main[0];
             var targets = _tasks[task].GetProperty("_kProgressTarget").EnumerateArray()
