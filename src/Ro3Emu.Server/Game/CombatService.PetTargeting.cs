@@ -10,6 +10,8 @@ public sealed partial class CombatService
     private static bool IsGuardianEffect(JsonElement row) => GameData.Int(row, "_iSystemType") == GuardianPetRules.EffectType
         || row.TryGetProperty("_ro3GuardianProc", out _);
 
+    private static double[] SkillAreaRange(JsonElement row) => Numbers(row, "_kRange");
+
     /// <summary>Whether a point is inside a skill row's area: monster selection for every skill, and a guardian's player
     /// targets. Guardian rows alone may carry the forward rectangle, inferred for Eve's final throw from its "ahead"
     /// description.
@@ -21,7 +23,7 @@ public sealed partial class CombatService
         Vec3 center = release is SkillRelease.Lock or SkillRelease.DragRect or SkillRelease.DragCircle ? requested : origin;
         float height = GameData.Int(row, "_iAreaHeightRange") / 100f;
         if (height > 0 && MathF.Abs(point.Y - center.Y) > height) return false;
-        var range = Numbers(row, "_kRange");
+        var range = SkillAreaRange(row);
         double radius = range.FirstOrDefault(300) / 100;
         var (forward, side) = FacingOffset(point.X - center.X, point.Z - center.Z, face);
         if (row.TryGetProperty("_ro3GuardianForwardRectangle", out _))

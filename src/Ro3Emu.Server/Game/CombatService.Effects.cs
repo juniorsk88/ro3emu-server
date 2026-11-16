@@ -111,14 +111,20 @@ public sealed partial class CombatService
             var target = FindMonster(s.WorldScene, action.Request.TargetId);
             return target != null && target.Hp > 0 && CanHitMonster(s, target) && Relation(row, false, race: target.Template.Race) ? [target] : [];
         }
-        if (radiusOverride == null && GameData.Int(row, "_iRelease") is not (SkillRelease.Lock or SkillRelease.DragRect
+        long release = GameData.Int(row, "_iRelease");
+        if (radiusOverride == null && release is not (SkillRelease.Lock or SkillRelease.DragRect
             or SkillRelease.DragCircle)) center = action.Origin;
         float height = GameData.Int(row, "_iAreaHeightRange") / 100f;
+        double? circleDistance = radiusOverride == null && release is (SkillRelease.FixCircle or SkillRelease.DragCircle)
+            && !row.TryGetProperty("_ro3GuardianForwardRectangle", out _)
+            ? SkillAreaRange(row).FirstOrDefault(300) / 100 + 0.1 : null;
+        bool InCircleBounds(MonsterUnit m) => circleDistance is not { } distance
+            || MonsterService.Distance(center.X, center.Z, m.X, m.Z) <= distance;
         // A radius override is a plain circle around the given center; otherwise the row's own area.
         bool InShape(MonsterUnit m) => radiusOverride is { } radius
             ? (height <= 0 || MathF.Abs(m.Y - center.Y) <= height) && Distance(center, m.Pos) <= radius + 0.1f
             : SkillAreaContains(row, action.Origin, center, action.Request.Face, m.Pos);
-        return _world.Map(s.WorldScene).Units.OfType<MonsterUnit>().Where(m => m.Hp > 0 && CanHitMonster(s, m) && Relation(row, false, race: m.Template.Race) && InShape(m))
+        return _world.Map(s.WorldScene).Units.OfType<MonsterUnit>().Where(m => m.Hp > 0 && InCircleBounds(m) && CanHitMonster(s, m) && Relation(row, false, race: m.Template.Race) && InShape(m))
             .OrderBy(m => Distance(center, m.Pos)).ThenBy(m => m.Uid).Take(max).ToList();
     }
 
