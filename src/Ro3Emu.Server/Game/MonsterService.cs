@@ -40,6 +40,17 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
 
     private const long UidBase = 1L << 41;
     private const int AggressiveAi = 20000004;
+    private static readonly IReadOnlyDictionary<int, bool> RenewalAggression = LoadRenewalAggression();
+
+    private static Dictionary<int, bool> LoadRenewalAggression()
+    {
+        using var stream = typeof(MonsterService).Assembly.GetManifestResourceStream("Ro3Emu.Server.Reconstructed.ro1-renewal-aggression.json")
+            ?? throw new InvalidOperationException("RO1 Renewal aggression reference is missing.");
+        using var data = JsonDocument.Parse(stream);
+        return data.RootElement.GetProperty("monsters").EnumerateObject().ToDictionary(
+            entry => int.Parse(entry.Name, System.Globalization.CultureInfo.InvariantCulture),
+            entry => entry.Value.GetProperty("aggressive").GetBoolean());
+    }
 
     /// <summary>A walk segment is capped so a monster seen mid-way is re-synchronized soon.</summary>
     private const float MaxSegment = 12f;
@@ -120,7 +131,7 @@ public sealed partial class MonsterService : MonsterBrain, IGameTicker
             Hit: attr.ContainsKey(109) ? A(109) : level + 1, Flee: attr.ContainsKey(110) ? A(110) : level, Cri: A(111),
             speed, (int)GameData.Int(npc, "_iElement"), (int)GameData.Int(npc, "_iRace"), (int)GameData.Int(npc, "_iSize"),
             Math.Max(1, (int)GameData.Int(npc, "_iCamp")),
-            Aggressive: ai == AggressiveAi,
+            Aggressive: RenewalAggression.GetValueOrDefault(npcId, ai == AggressiveAi),
             RoamDistance: speed > 0 ? Cm("_iRoamDis", 0) : 0, RoamTimeMs: aiRow is { } r2 ? (int)Math.Max(2000, GameData.Int(r2, "_iRoamTime")) : 8000,
             ViewRange: Cm("_iViewRange", 5), LeashDistance: aiRow is { } r3 && r3.TryGetProperty("_iUnFightParam", out var uf) && uf.ValueKind == JsonValueKind.Array
                 && uf.GetArrayLength() > 0 && GameData.Number(uf[0]) is { } leash ? (float)leash / 100 : Cm("_iChaseDistance", 18),
